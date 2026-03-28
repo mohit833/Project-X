@@ -325,7 +325,7 @@ async function init() {
   state.session = session;
   state.user = session?.user ?? null;
 
-  state.client.auth.onAuthStateChange((_event, sessionData) => {
+  state.client.auth.onAuthStateChange(async (_event, sessionData) => {
     state.session = sessionData;
     state.user = sessionData?.user ?? null;
     state.profile = null;
@@ -344,17 +344,15 @@ async function init() {
       return;
     }
 
-    window.setTimeout(async () => {
-      try {
-        await ensureProfile();
-        await loadMemberships();
-        await loadLeagueBundle();
-        render();
-      } catch (error) {
-        console.error(error);
-        flash(error.message || "Unable to refresh your league data.", "error");
-      }
-    }, 0);
+    try {
+      await ensureProfile();
+      await loadMemberships();
+      await loadLeagueBundle();
+      render();
+    } catch (error) {
+      console.error(error);
+      flash(error.message || "Unable to refresh your league data.", "error");
+    }
   });
 
   if (state.user) {
@@ -883,7 +881,7 @@ function renderAccountPanel() {
       <div class="section-head">
         <div>
           <h3>${isAuthenticated ? "Your account" : "Sign in"}</h3>
-          <p>${isAuthenticated ? "Update the name your friends will see on the board." : "Google sign-in keeps this simple for the whole group."}</p>
+          <p>${isAuthenticated ? "Update the name your friends will see on the board." : "Magic link login keeps this simple for the whole group."}</p>
         </div>
       </div>
       ${
@@ -912,16 +910,19 @@ function renderAccountPanel() {
               </form>
             `
             : `
-              <div class="form-grid">
-                <div class="field span-2">
-                  <button class="btn" type="button" data-action="sign-in-google">Continue with Google</button>
+              <form class="form-grid" id="magic-link-form">
+                <div class="field">
+                  <label for="auth-display-name">Display name</label>
+                  <input id="auth-display-name" name="display_name" maxlength="40" placeholder="Mohit" required />
+                </div>
+                <div class="field">
+                  <label for="auth-email">Email</label>
+                  <input id="auth-email" type="email" name="email" placeholder="you@example.com" required />
                 </div>
                 <div class="field span-2">
-                  <small>
-                    Google login avoids the free email delivery limits that break magic-link sign-in for larger leagues.
-                  </small>
+                  <button class="btn" type="submit">Send magic link</button>
                 </div>
-              </div>
+              </form>
             `
       }
     </section>
@@ -1803,25 +1804,6 @@ async function submitMagicLink(form) {
   form.reset();
 }
 
-function getAuthRedirectUrl() {
-  const redirectUrl = new URL(window.location.origin + window.location.pathname);
-  redirectUrl.hash = "account";
-  return redirectUrl.toString();
-}
-
-async function signInWithGoogle() {
-  const { error } = await state.client.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: getAuthRedirectUrl(),
-    },
-  });
-
-  if (error) {
-    throw error;
-  }
-}
-
 async function saveProfile(form) {
   const formData = new FormData(form);
   const displayName = cleanText(formData.get("display_name"), 40);
@@ -2135,11 +2117,6 @@ async function handleClick(event) {
     if (action === "sign-out") {
       await state.client.auth.signOut();
       flash("Signed out.", "success");
-      return;
-    }
-
-    if (action === "sign-in-google") {
-      await signInWithGoogle();
       return;
     }
 
