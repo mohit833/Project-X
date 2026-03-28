@@ -373,9 +373,25 @@ async function recoverSessionFromUrl() {
   const authCode = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   const authType = url.searchParams.get("type");
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const accessToken = hashParams.get("access_token");
+  const refreshToken = hashParams.get("refresh_token");
 
-  if (!authCode && !tokenHash) {
+  if (!authCode && !tokenHash && !(accessToken && refreshToken)) {
     return null;
+  }
+
+  if (accessToken && refreshToken) {
+    const { data, error } = await state.client.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    if (error) {
+      throw error;
+    }
+
+    clearAuthCallbackParams(url);
+    return data?.session ?? null;
   }
 
   if (authCode) {
@@ -409,6 +425,7 @@ function clearAuthCallbackParams(url) {
   url.searchParams.delete("token_hash");
   url.searchParams.delete("type");
   url.searchParams.delete("next");
+  url.hash = "";
   window.history.replaceState({}, document.title, url.toString());
 }
 
@@ -1789,7 +1806,8 @@ async function submitMagicLink(form) {
   const { error } = await state.client.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: window.location.href,
+      emailRedirectTo: getMagicLinkRedirectUrl(),
+      shouldCreateUser: true,
       data: {
         display_name: displayName,
       },
@@ -1802,6 +1820,12 @@ async function submitMagicLink(form) {
 
   flash(`Magic link sent to ${email}. Open it on this device to sign in.`, "success");
   form.reset();
+}
+
+function getMagicLinkRedirectUrl() {
+  const url = new URL(window.location.origin + window.location.pathname);
+  url.hash = "account";
+  return url.toString();
 }
 
 async function saveProfile(form) {
