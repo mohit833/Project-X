@@ -22,6 +22,11 @@ const state = {
   loading: false,
   realtimeChannel: null,
   reloadTimer: null,
+  autoSyncTimer: null,
+  autoSyncBusy: false,
+  providerFixtures: [],
+  loadingProviderFixtures: false,
+  syncingMatchIds: new Set(),
   installPromptEvent: null,
   isStandalone:
     window.matchMedia?.("(display-mode: standalone)")?.matches ||
@@ -43,9 +48,30 @@ const DEMO_MATCHES = [
     picks_deadline_at: "2026-03-28T14:20:00.000Z",
     score_deadline_at: "2026-03-28T14:42:00.000Z",
     innings_started_at: "2026-03-28T14:00:00.000Z",
+    provider: "cricapi",
+    external_match_id: "demo-match-1",
+    series_name: "Indian Premier League",
+    current_innings_ball: 16,
+    current_over_display: "2.4",
+    auto_sync_enabled: true,
+    last_synced_at: "2026-03-28T14:08:00.000Z",
+    playing_xi: {
+      team_a: [
+        { name: "Ruturaj Gaikwad" },
+        { name: "Rachin Ravindra" },
+        { name: "Shivam Dube" },
+        { name: "MS Dhoni" },
+      ],
+      team_b: [
+        { name: "Rohit Sharma" },
+        { name: "Suryakumar Yadav" },
+        { name: "Tilak Varma" },
+        { name: "Jasprit Bumrah" },
+      ],
+    },
     status: "live",
     notes:
-      "Admin manually sets lock times based on TV/Hotstar rule. Use this screen as the source of truth.",
+      "Live demo sync is using provider data for the match clock, playing XI, and scoring.",
     match_results: null,
   },
   {
@@ -60,6 +86,27 @@ const DEMO_MATCHES = [
     picks_deadline_at: "2026-03-26T14:19:00.000Z",
     score_deadline_at: "2026-03-26T14:41:00.000Z",
     innings_started_at: "2026-03-26T14:00:00.000Z",
+    provider: "cricapi",
+    external_match_id: "demo-match-2",
+    series_name: "Indian Premier League",
+    current_innings_ball: 120,
+    current_over_display: "20.0",
+    auto_sync_enabled: false,
+    last_synced_at: "2026-03-26T18:00:00.000Z",
+    playing_xi: {
+      team_a: [
+        { name: "Virat Kohli" },
+        { name: "Phil Salt" },
+        { name: "Rajat Patidar" },
+        { name: "Yash Dayal" },
+      ],
+      team_b: [
+        { name: "Ajinkya Rahane" },
+        { name: "Rinku Singh" },
+        { name: "Varun Chakravarthy" },
+        { name: "Sunil Narine" },
+      ],
+    },
     status: "completed",
     notes: "Completed sample match.",
     match_results: {
@@ -251,6 +298,8 @@ async function init() {
       state.members = [];
       state.predictions = [];
       state.leaderboard = [];
+      state.providerFixtures = [];
+      teardownAutoSync();
       render();
       return;
     }
@@ -375,7 +424,9 @@ async function loadMemberships() {
     state.members = [];
     state.predictions = [];
     state.leaderboard = [];
+    state.providerFixtures = [];
     teardownRealtime();
+    teardownAutoSync();
     return;
   }
 
@@ -447,6 +498,7 @@ async function loadLeagueBundle() {
 
   if (!state.matches.length) {
     teardownRealtime();
+    teardownAutoSync();
     render();
     return;
   }
@@ -458,6 +510,7 @@ async function loadLeagueBundle() {
   }
 
   setupRealtime(leagueId);
+  setupAutoSync();
 }
 
 function setupRealtime(leagueId) {
@@ -530,6 +583,33 @@ function teardownRealtime() {
   state.realtimeChannel = null;
 }
 
+function setupAutoSync() {
+  teardownAutoSync();
+
+  if (!state.user || currentMembership()?.role !== "admin" || !hasCricketApiConfig()) {
+    return;
+  }
+
+  const trackedMatches = state.matches.filter(shouldAutoSyncMatch);
+  if (!trackedMatches.length) {
+    return;
+  }
+
+  const intervalMs = Math.max(Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 90000, 30000);
+  state.autoSyncTimer = window.setInterval(() => {
+    syncTrackedMatches({ quiet: true }).catch((error) => {
+      console.error(error);
+    });
+  }, intervalMs);
+}
+
+function teardownAutoSync() {
+  if (state.autoSyncTimer) {
+    window.clearInterval(state.autoSyncTimer);
+    state.autoSyncTimer = null;
+  }
+}
+
 function scheduleLeagueReload() {
   if (!state.client || !state.activeLeagueId) {
     return;
@@ -588,7 +668,6 @@ function render() {
       <main class="layout">
         ${renderNotice()}
         ${renderHero()}
-        ${renderSetupPanel()}
         ${renderAccountPanel()}
         ${renderLeagueAccessPanel()}
         ${renderDashboard()}
@@ -618,11 +697,10 @@ function renderHero() {
           <h2>Run your IPL prediction league on one public link.</h2>
           <p>
             Friends pick one batsman, one bowler, one winning team, and one exact first-innings total.
-            The app locks duplicate picks, respects timing windows, and keeps the full leaderboard in one place.
+            The app now pulls IPL fixtures, syncs playing XI, locks picks on the live innings clock, and settles the leaderboard after the match.
           </p>
           <div class="hero-actions">
             <a class="btn" href="#dashboard">Start the league</a>
-            <a class="ghost-btn" href="#setup">Deployment steps</a>
             ${
               state.installPromptEvent && !state.isStandalone
                 ? `<button class="ghost-btn" type="button" data-action="install-app">Add to home screen</button>`
@@ -649,14 +727,14 @@ function renderHero() {
             <div class="section-head">
               <div>
                 <h3>Built for edge cases</h3>
-                <p>Admin lock times keep the game fair when TV and streaming are out of sync.</p>
+                <p>Live sync keeps the game fair even when picks race in at the last second.</p>
               </div>
             </div>
             <div class="chip-list">
               <span class="chip"><strong>No duplicates</strong>First come, first serve</span>
               <span class="chip"><strong>Pre-XI picks lock</strong>No edits after early core picks</span>
-              <span class="chip"><strong>Server timestamps</strong>No phone clock cheating</span>
-              <span class="chip"><strong>Free hosting</strong>Vercel + Supabase</span>
+              <span class="chip"><strong>Live innings clock</strong>3.1 and 7.1 overs lock automatically</span>
+              <span class="chip"><strong>Auto scoring</strong>Completed matches settle themselves</span>
             </div>
           </div>
         </div>
@@ -906,7 +984,7 @@ function renderDashboard() {
                   .map((item) => renderMatchCard(item))
                   .join("")}</div>`
               : `<div class="empty-state">No matches yet. ${
-                  isAdmin ? "Create the first match below." : "Ask your admin to add one."
+                  isAdmin ? "Load the latest IPL fixtures from the live feed below." : "Ask your admin to sync the next fixture."
                 }</div>`
           }
         </div>
@@ -919,7 +997,7 @@ function renderDashboard() {
               `
               : `<section class="panel"><div class="empty-state">${
                   isAdmin
-                    ? "No matches yet. Create the first one below."
+                    ? "No matches yet. Import the first fixture from the live feed below."
                     : "Choose a match to start."
                 }</div></section>`
           }
@@ -1001,10 +1079,16 @@ function renderMatchCard(match) {
 function renderMatchDetail(match, prediction, isAdmin) {
   const status = computeMatchStatus(match);
   const entries = getPredictionsForMatch(match.id);
-  const coreLocked = isCoreLocked(match, prediction);
-  const scoreLocked = isScoreLocked(match, prediction);
-  const allWindowsLocked = coreLocked && scoreLocked;
+  const liveWindow = getLiveWindowState(match, prediction);
+  const coreLocked = liveWindow.coreLocked;
+  const scoreLocked = liveWindow.scoreLocked;
+  const allWindowsLocked = liveWindow.allWindowsLocked;
   const scoreResult = match.match_results;
+  const playingXiGroups = getPlayingXiGroups(match);
+  const hasPlayingXi = playingXiGroups.some((group) => group.players.length);
+  const batsmanOptions = getSelectablePlayers(match, "batsman", prediction);
+  const bowlerOptions = getSelectablePlayers(match, "bowler", prediction);
+  const syncSummary = getMatchSyncSummary(match);
 
   return `
     <section class="panel">
@@ -1017,15 +1101,22 @@ function renderMatchDetail(match, prediction, isAdmin) {
       </div>
 
       <div class="chip-list">
-        <span class="chip"><strong>XI announced</strong>${escapeHtml(formatDate(match.playing_xi_announced_at) || "Not set")}</span>
-        <span class="chip"><strong>Core picks lock</strong>${escapeHtml(formatDate(match.picks_deadline_at) || "Not set")}</span>
-        <span class="chip"><strong>Score lock</strong>${escapeHtml(formatDate(match.score_deadline_at) || "Not set")}</span>
-        <span class="chip"><strong>Invite fairness</strong>Server timestamps decide all ties</span>
+        <span class="chip"><strong>Data source</strong>${escapeHtml(syncSummary.source)}</span>
+        <span class="chip"><strong>Playing XI</strong>${escapeHtml(syncSummary.playingXiLabel)}</span>
+        <span class="chip"><strong>Core picks</strong>${escapeHtml(formatCoreLockLabel(match, liveWindow))}</span>
+        <span class="chip"><strong>Score lock</strong>${escapeHtml(formatScoreLockLabel(match, liveWindow))}</span>
+        <span class="chip"><strong>Live clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
+        <span class="chip"><strong>Last sync</strong>${escapeHtml(syncSummary.lastSynced)}</span>
       </div>
 
       ${
         match.notes
           ? `<p class="footnote">${escapeHtml(match.notes)}</p>`
+          : ""
+      }
+      ${
+        match.sync_error
+          ? `<div class="notice notice-error">${escapeHtml(match.sync_error)}</div>`
           : ""
       }
 
@@ -1047,19 +1138,19 @@ function renderMatchDetail(match, prediction, isAdmin) {
                     <input type="hidden" name="match_id" value="${match.id}" />
                     <div class="field">
                       <label for="batsman-name">Batsman</label>
-                      <input id="batsman-name" name="batsman_name" placeholder="Virat Kohli" value="${escapeAttribute(
-                        prediction?.batsman_name || "",
-                      )}" ${coreLocked ? "disabled" : ""} />
+                      <select id="batsman-name" name="batsman_name" ${coreLocked || !hasPlayingXi ? "disabled" : ""}>
+                        ${renderPlayerSelectOptions("Choose batsman", batsmanOptions, prediction?.batsman_name)}
+                      </select>
                     </div>
                     <div class="field">
                       <label for="bowler-name">Bowler</label>
-                      <input id="bowler-name" name="bowler_name" placeholder="Jasprit Bumrah" value="${escapeAttribute(
-                        prediction?.bowler_name || "",
-                      )}" ${coreLocked ? "disabled" : ""} />
+                      <select id="bowler-name" name="bowler_name" ${coreLocked || !hasPlayingXi ? "disabled" : ""}>
+                        ${renderPlayerSelectOptions("Choose bowler", bowlerOptions, prediction?.bowler_name)}
+                      </select>
                     </div>
                     <div class="field">
                       <label for="team-pick">Winning team</label>
-                      <select id="team-pick" name="team_pick" ${coreLocked ? "disabled" : ""}>
+                      <select id="team-pick" name="team_pick" ${coreLocked || !hasPlayingXi ? "disabled" : ""}>
                         <option value="">Choose a winner</option>
                         <option value="${escapeAttribute(match.team_a)}" ${
                           prediction?.team_pick === match.team_a ? "selected" : ""
@@ -1077,8 +1168,11 @@ function renderMatchDetail(match, prediction, isAdmin) {
                     </div>
                     <div class="field span-2">
                       <small>
-                        Enter batsman, bowler, and team together. Exact score can be added later until the score lock.
-                        If your core picks were submitted before the playing XI announcement, they become permanently locked.
+                        ${
+                          hasPlayingXi
+                            ? "Choose from the synced playing XI. Core picks lock at 3.1 overs, score prediction locks at 7.1 overs, and pre-XI core picks stay permanently locked."
+                            : "Waiting for the live playing XI feed. Player dropdowns will populate automatically once the provider publishes the lineups."
+                        }
                       </small>
                     </div>
                     <div class="field span-2">
@@ -1163,6 +1257,51 @@ function renderMatchDetail(match, prediction, isAdmin) {
         </div>
       </div>
 
+      <div class="grid-2">
+        <div class="panel">
+          <div class="section-head">
+            <div>
+              <h4>Playing XI</h4>
+              <p>${hasPlayingXi ? "The dropdowns below are powered by this synced XI." : "The provider has not published the playing XI yet."}</p>
+            </div>
+          </div>
+          ${
+            hasPlayingXi
+              ? playingXiGroups
+                  .map(
+                    (group) => `
+                      <div class="team-block">
+                        <strong>${escapeHtml(group.teamName)}</strong>
+                        <div class="chip-list">
+                          ${group.players.map((player) => `<span class="chip">${escapeHtml(player.name)}</span>`).join("")}
+                        </div>
+                      </div>
+                    `,
+                  )
+                  .join("")
+              : `<div class="empty-state">Sync the match after the toss to pull the official XI and unlock the player dropdowns.</div>`
+          }
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <div>
+              <h4>Automation status</h4>
+              <p>The live feed updates the innings clock and settles completed matches.</p>
+            </div>
+          </div>
+          <div class="chip-list">
+            <span class="chip"><strong>Series</strong>${escapeHtml(match.series_name || "IPL")}</span>
+            <span class="chip"><strong>Auto sync</strong>${match.auto_sync_enabled ? "On" : "Off"}</span>
+            <span class="chip"><strong>Provider ID</strong>${escapeHtml(match.external_match_id || "Manual match")}</span>
+            <span class="chip"><strong>First innings clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
+          </div>
+          <p class="footnote">
+            The 3.1 and 7.1 over locks use the provider's first-innings ball count whenever it is available. Until the feed exposes that ball count, the stored fallback timestamps are used.
+          </p>
+        </div>
+      </div>
+
       ${
         scoreResult
           ? `
@@ -1170,7 +1309,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
               <div class="section-head">
                 <div>
                   <h4>Scored result</h4>
-                  <p>Points have been calculated for this match.</p>
+                  <p>Points have been calculated automatically for this match.</p>
                 </div>
               </div>
               <div class="chip-list">
@@ -1187,7 +1326,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
             </div>
           `
           : !isAdmin
-            ? `<div class="notice notice-info">Admin will enter results here once the match is complete.</div>`
+            ? `<div class="notice notice-info">This match will settle automatically once the completed scorecard arrives.</div>`
             : ""
       }
     </section>
@@ -1218,187 +1357,138 @@ function renderPredictionRow(entry) {
 }
 
 function renderAdminTools(match) {
-  const leagueId = match?.league_id || state.activeLeagueId || "";
+  const hasApiKey = hasCricketApiConfig();
+  const importedIds = new Set(
+    state.matches.map((item) => String(item.external_match_id || "")).filter(Boolean),
+  );
+  const selectedSummary = match ? getMatchSyncSummary(match) : null;
 
   return `
     <section class="panel">
       <div class="section-head">
         <div>
           <h3>Admin tools</h3>
-          <p>Use these forms to add matches, lock windows, and settle points.</p>
+          <p>Import IPL fixtures, sync lineups, and let completed matches settle themselves.</p>
         </div>
       </div>
       <div class="stack">
-        <form class="admin-card" id="create-match-form">
+        <div class="admin-card">
           <div class="section-head">
             <div>
-              <h4>Create match</h4>
-              <p>Add upcoming fixtures for your league.</p>
+              <h4>Live IPL import</h4>
+              <p>Pull the next IPL fixture from the feed instead of typing team names, venues, or lock windows by hand.</p>
             </div>
           </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="create-team-a">Team A</label>
-              <input id="create-team-a" name="team_a" placeholder="Chennai Super Kings" required />
-            </div>
-            <div class="field">
-              <label for="create-team-b">Team B</label>
-              <input id="create-team-b" name="team_b" placeholder="Mumbai Indians" required />
-            </div>
-            <div class="field">
-              <label for="create-title">Title</label>
-              <input id="create-title" name="title" placeholder="CSK vs MI" />
-            </div>
-            <div class="field">
-              <label for="create-venue">Venue</label>
-              <input id="create-venue" name="venue" placeholder="Chepauk" />
-            </div>
-            <div class="field">
-              <label for="create-starts-at">Match starts at</label>
-              <input id="create-starts-at" type="datetime-local" name="starts_at" required />
-            </div>
-            <div class="field">
-              <label for="create-xi-at">Playing XI announced at</label>
-              <input id="create-xi-at" type="datetime-local" name="playing_xi_announced_at" />
-            </div>
-            <div class="field">
-              <label for="create-picks-at">Core picks lock</label>
-              <input id="create-picks-at" type="datetime-local" name="picks_deadline_at" required />
-            </div>
-            <div class="field">
-              <label for="create-score-at">Score lock</label>
-              <input id="create-score-at" type="datetime-local" name="score_deadline_at" required />
-            </div>
-            <div class="field span-2">
-              <label for="create-notes">Notes</label>
-              <textarea id="create-notes" name="notes" placeholder="Optional reminder about lock rules or rain rules."></textarea>
-            </div>
-            <input type="hidden" name="league_id" value="${leagueId}" />
-            <div class="field span-2">
-              <button class="btn" type="submit">Create match</button>
-            </div>
-          </div>
-        </form>
+          ${
+            hasApiKey
+              ? `
+                <div class="chip-list">
+                  <span class="chip"><strong>Provider</strong>CricAPI</span>
+                  <span class="chip"><strong>League</strong>IPL</span>
+                  <span class="chip"><strong>Polling</strong>${escapeHtml(
+                    `${Math.round((APP_CONFIG.AUTO_SYNC_INTERVAL_MS || 90000) / 1000)} sec`,
+                  )}</span>
+                </div>
+                <div class="split-line" style="margin-top: 1rem;">
+                  <button class="btn" type="button" data-action="load-provider-fixtures" ${state.loadingProviderFixtures ? "disabled" : ""}>
+                    ${state.loadingProviderFixtures ? "Loading fixtures..." : "Load IPL fixtures"}
+                  </button>
+                  <span class="subtle">Import the latest live or upcoming IPL fixtures for this league.</span>
+                </div>
+              `
+              : `
+                <div class="notice notice-info">
+                  Add <code>CRICKET_API_KEY</code> in <code>app/config.js</code> to enable automatic fixture sync, playing XI dropdowns, and end-of-match scoring.
+                </div>
+              `
+          }
+        </div>
         ${
-          match
+          hasApiKey && state.providerFixtures.length
             ? `
-              <form class="timeline-card" id="timeline-form">
+              <div class="admin-card">
                 <div class="section-head">
                   <div>
-                    <h4>Edit lock windows</h4>
-                    <p>Set the official source-of-truth timestamps for this match.</p>
+                    <h4>Available fixtures</h4>
+                    <p>Import a fixture once, then the app keeps the match clock, lineups, and scoring updated.</p>
                   </div>
                 </div>
-                <div class="form-grid">
-                  <input type="hidden" name="match_id" value="${match.id}" />
-                  <div class="field">
-                    <label for="timeline-status">Status</label>
-                    <select id="timeline-status" name="status">
-                      ${["scheduled", "live", "locked", "completed", "cancelled"]
-                        .map(
-                          (status) => `
-                            <option value="${status}" ${
-                              computeMatchStatus(match) === status ? "selected" : ""
-                            }>${labelizeStatus(status)}</option>
-                          `,
-                        )
-                        .join("")}
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="timeline-starts-at">Starts at</label>
-                    <input id="timeline-starts-at" type="datetime-local" name="starts_at" value="${escapeAttribute(
-                      toDateTimeInput(match.starts_at),
-                    )}" />
-                  </div>
-                  <div class="field">
-                    <label for="timeline-innings-at">Innings started at</label>
-                    <input id="timeline-innings-at" type="datetime-local" name="innings_started_at" value="${escapeAttribute(
-                      toDateTimeInput(match.innings_started_at),
-                    )}" />
-                  </div>
-                  <div class="field">
-                    <label for="timeline-xi-at">Playing XI announced at</label>
-                    <input id="timeline-xi-at" type="datetime-local" name="playing_xi_announced_at" value="${escapeAttribute(
-                      toDateTimeInput(match.playing_xi_announced_at),
-                    )}" />
-                  </div>
-                  <div class="field">
-                    <label for="timeline-picks-at">Core picks lock</label>
-                    <input id="timeline-picks-at" type="datetime-local" name="picks_deadline_at" value="${escapeAttribute(
-                      toDateTimeInput(match.picks_deadline_at),
-                    )}" required />
-                  </div>
-                  <div class="field">
-                    <label for="timeline-score-at">Score lock</label>
-                    <input id="timeline-score-at" type="datetime-local" name="score_deadline_at" value="${escapeAttribute(
-                      toDateTimeInput(match.score_deadline_at),
-                    )}" required />
-                  </div>
-                  <div class="field span-2">
-                    <button class="btn" type="submit">Save match timeline</button>
-                  </div>
+                <div class="entry-list">
+                  ${state.providerFixtures
+                    .map((fixture) => {
+                      const alreadyImported = importedIds.has(String(fixture.external_match_id));
+                      return `
+                        <div class="entry-item">
+                          <div>
+                            <strong>${escapeHtml(fixture.title)}</strong>
+                            <div class="entry-meta">
+                              <span class="subtle">${escapeHtml(formatDate(fixture.starts_at))}</span>
+                              <span class="subtle">${escapeHtml(fixture.venue || "Venue TBD")}</span>
+                              <span class="subtle">${escapeHtml(fixture.series_name || "IPL")}</span>
+                            </div>
+                          </div>
+                          <div class="entry-stats">
+                            <button class="${alreadyImported ? "ghost-btn" : "btn"}" type="button" data-action="import-provider-fixture" data-external-match-id="${escapeAttribute(
+                              fixture.external_match_id,
+                            )}">
+                              ${alreadyImported ? "Update match" : "Import match"}
+                            </button>
+                          </div>
+                        </div>
+                      `;
+                    })
+                    .join("")}
                 </div>
-              </form>
-
-              <form class="admin-card" id="result-form">
-                <div class="section-head">
-                  <div>
-                    <h4>Settle result</h4>
-                    <p>Enter normalized scoring data once the match is complete.</p>
-                  </div>
-                </div>
-                <div class="form-grid">
-                  <input type="hidden" name="match_id" value="${match.id}" />
-                  <div class="field">
-                    <label for="result-winner">Winner</label>
-                    <select id="result-winner" name="winner_team" required>
-                      <option value="">Choose winner</option>
-                      <option value="${escapeAttribute(match.team_a)}" ${
-                        match.match_results?.winner_team === match.team_a ? "selected" : ""
-                      }>${escapeHtml(match.team_a)}</option>
-                      <option value="${escapeAttribute(match.team_b)}" ${
-                        match.match_results?.winner_team === match.team_b ? "selected" : ""
-                      }>${escapeHtml(match.team_b)}</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="result-total">1st innings total</label>
-                    <input id="result-total" type="number" min="0" name="first_innings_total" value="${escapeAttribute(
-                      match.match_results?.first_innings_total ?? "",
-                    )}" required />
-                  </div>
-                  <div class="field span-2">
-                    <label for="result-batsmen">Batsman runs</label>
-                    <textarea id="result-batsmen" name="batsman_runs" placeholder="Virat Kohli: 72&#10;Ajinkya Rahane: 29">${escapeHtml(
-                      mapToLines(match.match_results?.batsman_runs),
-                    )}</textarea>
-                    <small>Use one line per player in the format <code>Name: runs</code>.</small>
-                  </div>
-                  <div class="field span-2">
-                    <label for="result-bowlers">Bowler wickets</label>
-                    <textarea id="result-bowlers" name="bowler_wickets" placeholder="Varun Chakravarthy: 3&#10;Jasprit Bumrah: 2">${escapeHtml(
-                      mapToLines(match.match_results?.bowler_wickets),
-                    )}</textarea>
-                    <small>Use one line per player in the format <code>Name: wickets</code>.</small>
-                  </div>
-                  <div class="field span-2">
-                    <label for="result-notes">Result notes</label>
-                    <textarea id="result-notes" name="notes" placeholder="Optional note for rain, DLS, abandoned games, or disputes.">${escapeHtml(
-                      match.match_results?.notes || "",
-                    )}</textarea>
-                  </div>
-                  <div class="field span-2">
-                    <button class="btn" type="submit">Save scored result</button>
-                  </div>
-                </div>
-              </form>
+              </div>
             `
             : `
               <div class="empty-state">
-                Create a match first, then the lock-window and scoring forms for that match will appear here.
+                ${
+                  hasApiKey
+                    ? "Load IPL fixtures to import the next match into this league."
+                    : "Add a cricket API key in the app config to enable the live import tools."
+                }
               </div>
             `
+        }
+        ${
+          match
+            ? `
+              <div class="admin-card">
+                <div class="section-head">
+                  <div>
+                    <h4>Selected match sync</h4>
+                    <p>${match.external_match_id ? "Refresh this match now, or let auto sync keep it updated in the background while the app is open." : "Import this fixture from the live provider to enable automatic XI, overs, and scoring."}</p>
+                  </div>
+                </div>
+                ${
+                  match.external_match_id
+                    ? `
+                      <div class="chip-list">
+                        <span class="chip"><strong>Provider ID</strong>${escapeHtml(match.external_match_id)}</span>
+                        <span class="chip"><strong>Auto sync</strong>${match.auto_sync_enabled ? "On" : "Off"}</span>
+                        <span class="chip"><strong>Playing XI</strong>${escapeHtml(selectedSummary?.playingXiLabel || "Waiting")}</span>
+                        <span class="chip"><strong>Last sync</strong>${escapeHtml(selectedSummary?.lastSynced || "Never")}</span>
+                      </div>
+                      <div class="split-line" style="margin-top: 1rem;">
+                        <button class="btn" type="button" data-action="sync-selected-match" data-match-id="${match.id}" ${
+                          state.syncingMatchIds.has(match.id) ? "disabled" : ""
+                        }>${state.syncingMatchIds.has(match.id) ? "Syncing..." : "Sync now"}</button>
+                        <button class="ghost-btn" type="button" data-action="toggle-auto-sync" data-match-id="${match.id}">
+                          ${match.auto_sync_enabled ? "Pause auto sync" : "Resume auto sync"}
+                        </button>
+                      </div>
+                      ${
+                        match.sync_error
+                          ? `<div class="notice notice-error" style="margin-top: 1rem;">${escapeHtml(match.sync_error)}</div>`
+                          : ""
+                      }
+                    `
+                    : `<div class="empty-state">No provider link yet. Import this fixture from the live list above, and the app will handle lineups, lock windows, and results automatically.</div>`
+                }
+              </div>
+            `
+            : ""
         }
       </div>
     </section>
@@ -1746,6 +1836,33 @@ async function handleClick(event) {
       return;
     }
 
+    if (action === "load-provider-fixtures") {
+      await loadProviderFixtures();
+      return;
+    }
+
+    if (action === "import-provider-fixture") {
+      await importProviderFixture(target.getAttribute("data-external-match-id"));
+      return;
+    }
+
+    if (action === "sync-selected-match") {
+      const matchId = target.getAttribute("data-match-id");
+      const match = state.matches.find((item) => item.id === matchId);
+      if (!match) {
+        throw new Error("Match not found.");
+      }
+
+      await syncMatchFromProvider(match, { quiet: false, flashSuccess: true });
+      return;
+    }
+
+    if (action === "toggle-auto-sync") {
+      const matchId = target.getAttribute("data-match-id");
+      await toggleAutoSync(matchId);
+      return;
+    }
+
     if (action === "install-app") {
       await installApp();
       return;
@@ -1816,20 +1933,19 @@ function computeMatchStatus(match) {
     return "cancelled";
   }
 
-  const now = Date.now();
-  const picksDeadline = match.picks_deadline_at
-    ? new Date(match.picks_deadline_at).getTime()
-    : null;
-  const scoreDeadline = match.score_deadline_at
-    ? new Date(match.score_deadline_at).getTime()
-    : null;
-  const startsAt = match.starts_at ? new Date(match.starts_at).getTime() : null;
+  if (match.status === "completed") {
+    return "completed";
+  }
 
-  if (scoreDeadline && now > scoreDeadline) {
+  const liveWindow = getLiveWindowState(match, null);
+  const startsAt = match.starts_at ? new Date(match.starts_at).getTime() : null;
+  const now = Date.now();
+
+  if (liveWindow.scoreLocked) {
     return "locked";
   }
 
-  if (startsAt && now >= startsAt) {
+  if (liveWindow.currentBall !== null || (startsAt && now >= startsAt)) {
     return "live";
   }
 
@@ -1845,23 +1961,11 @@ function labelizeStatus(status) {
 }
 
 function isCoreLocked(match, prediction) {
-  if (prediction?.core_locked_due_to_pre_xi) {
-    return true;
-  }
-
-  if (!match?.picks_deadline_at) {
-    return false;
-  }
-
-  return Date.now() > new Date(match.picks_deadline_at).getTime();
+  return getLiveWindowState(match, prediction).coreLocked;
 }
 
 function isScoreLocked(match, prediction) {
-  if (!match?.score_deadline_at) {
-    return false;
-  }
-
-  return Date.now() > new Date(match.score_deadline_at).getTime();
+  return getLiveWindowState(match, prediction).scoreLocked;
 }
 
 function getCurrentUserPoints() {
@@ -1936,6 +2040,1072 @@ function buildLeaderboardFromMatches(members, predictions, matches) {
   return rows.sort(
     (left, right) => right.total_points - left.total_points || left.display_name.localeCompare(right.display_name),
   );
+}
+
+function hasCricketApiConfig() {
+  return !state.demoMode && Boolean(String(APP_CONFIG.CRICKET_API_KEY || "").trim());
+}
+
+function getLiveWindowState(match, prediction) {
+  const currentBall = toOptionalInteger(match?.current_innings_ball);
+  const currentOverDisplay =
+    cleanNullableText(match?.current_over_display, 20) ||
+    (currentBall !== null ? formatBallsAsOvers(currentBall) : null);
+  const coreLockedByTime = match?.picks_deadline_at
+    ? Date.now() > new Date(match.picks_deadline_at).getTime()
+    : false;
+  const scoreLockedByTime = match?.score_deadline_at
+    ? Date.now() > new Date(match.score_deadline_at).getTime()
+    : false;
+
+  return {
+    currentBall,
+    currentOverDisplay,
+    coreLocked:
+      Boolean(prediction?.core_locked_due_to_pre_xi) ||
+      (currentBall !== null ? currentBall >= 19 : coreLockedByTime),
+    scoreLocked: currentBall !== null ? currentBall >= 43 : scoreLockedByTime,
+    allWindowsLocked:
+      (Boolean(prediction?.core_locked_due_to_pre_xi) ||
+        (currentBall !== null ? currentBall >= 19 : coreLockedByTime)) &&
+      (currentBall !== null ? currentBall >= 43 : scoreLockedByTime),
+  };
+}
+
+function formatCoreLockLabel(match, liveWindow) {
+  if (liveWindow.currentBall !== null) {
+    return liveWindow.coreLocked
+      ? `Locked at 3.1 overs (${liveWindow.currentOverDisplay || "live"})`
+      : `Open until 3.1 overs (${liveWindow.currentOverDisplay || "live"})`;
+  }
+
+  return formatDate(match?.picks_deadline_at) || "Waiting for live clock";
+}
+
+function formatScoreLockLabel(match, liveWindow) {
+  if (liveWindow.currentBall !== null) {
+    return liveWindow.scoreLocked
+      ? `Locked at 7.1 overs (${liveWindow.currentOverDisplay || "live"})`
+      : `Open until 7.1 overs (${liveWindow.currentOverDisplay || "live"})`;
+  }
+
+  return formatDate(match?.score_deadline_at) || "Waiting for live clock";
+}
+
+function getPlayingXiGroups(match) {
+  const payload = match?.playing_xi && typeof match.playing_xi === "object"
+    ? match.playing_xi
+    : buildEmptyPlayingXi();
+
+  return [
+    {
+      teamName: match?.team_a || "Team A",
+      players: normalizePlayerList(payload.team_a, match?.team_a || "Team A"),
+    },
+    {
+      teamName: match?.team_b || "Team B",
+      players: normalizePlayerList(payload.team_b, match?.team_b || "Team B"),
+    },
+  ];
+}
+
+function getSelectablePlayers(match, role, prediction) {
+  const currentValue =
+    role === "batsman" ? prediction?.batsman_name || "" : prediction?.bowler_name || "";
+  const currentKey = normalizeName(currentValue);
+  const taken = new Set(
+    getPredictionsForMatch(match.id)
+      .filter((entry) => entry.user_id !== state.user?.id)
+      .map((entry) =>
+        normalizeName(role === "batsman" ? entry.batsman_name : entry.bowler_name),
+      )
+      .filter(Boolean),
+  );
+
+  return getPlayingXiGroups(match).map((group) => ({
+    teamName: group.teamName,
+    players: group.players.filter((player) => {
+      const playerKey = normalizeName(player.name);
+      return !taken.has(playerKey) || playerKey === currentKey;
+    }),
+  }));
+}
+
+function renderPlayerSelectOptions(placeholder, groups, selectedValue) {
+  const selectedKey = normalizeName(selectedValue);
+  let foundSelected = false;
+
+  const options = groups
+    .map((group) => {
+      const items = group.players
+        .map((player) => {
+          const playerKey = normalizeName(player.name);
+          const isSelected = playerKey === selectedKey;
+          if (isSelected) {
+            foundSelected = true;
+          }
+
+          return `<option value="${escapeAttribute(player.name)}" ${
+            isSelected ? "selected" : ""
+          }>${escapeHtml(player.name)}</option>`;
+        })
+        .join("");
+
+      if (!items) {
+        return "";
+      }
+
+      return `<optgroup label="${escapeAttribute(group.teamName)}">${items}</optgroup>`;
+    })
+    .join("");
+
+  const savedOption =
+    selectedValue && !foundSelected
+      ? `<option value="${escapeAttribute(selectedValue)}" selected>${escapeHtml(
+          `${selectedValue} (saved pick)`,
+        )}</option>`
+      : "";
+
+  return `<option value="">${escapeHtml(placeholder)}</option>${savedOption}${options}`;
+}
+
+function getMatchSyncSummary(match) {
+  const liveWindow = getLiveWindowState(match, null);
+  const playerCount = getPlayingXiGroups(match).reduce(
+    (count, group) => count + group.players.length,
+    0,
+  );
+
+  return {
+    source: match?.external_match_id ? "CricAPI" : "Manual",
+    playingXiLabel: playerCount ? `${playerCount} players synced` : "Waiting for XI",
+    liveClock: liveWindow.currentOverDisplay
+      ? `${liveWindow.currentOverDisplay} overs`
+      : match?.innings_started_at
+        ? "Innings started"
+        : "Not started",
+    lastSynced: formatDate(match?.last_synced_at) || "Not synced yet",
+  };
+}
+
+function shouldAutoSyncMatch(match) {
+  if (!match?.external_match_id || !match?.auto_sync_enabled || match?.match_results) {
+    return false;
+  }
+
+  if (match.status === "cancelled") {
+    return false;
+  }
+
+  if (!match.starts_at) {
+    return true;
+  }
+
+  const startsAt = new Date(match.starts_at).getTime();
+  if (Number.isNaN(startsAt)) {
+    return true;
+  }
+
+  const now = Date.now();
+  return startsAt <= now + 36 * 60 * 60 * 1000 && startsAt >= now - 48 * 60 * 60 * 1000;
+}
+
+async function loadProviderFixtures() {
+  if (!hasCricketApiConfig()) {
+    throw new Error("Add a cricket API key in app/config.js to enable live sync.");
+  }
+
+  state.loadingProviderFixtures = true;
+  render();
+
+  try {
+    state.providerFixtures = await fetchProviderFixtures();
+    render();
+    flash(`Loaded ${state.providerFixtures.length} IPL fixtures from CricAPI.`, "success");
+  } finally {
+    state.loadingProviderFixtures = false;
+    render();
+  }
+}
+
+async function importProviderFixture(externalMatchId) {
+  if (!externalMatchId) {
+    throw new Error("Fixture ID is missing.");
+  }
+
+  const fixture = state.providerFixtures.find(
+    (item) => String(item.external_match_id) === String(externalMatchId),
+  );
+
+  if (!fixture) {
+    throw new Error("Fixture not found in the latest provider list.");
+  }
+
+  const existingMatch = state.matches.find(
+    (item) => String(item.external_match_id) === String(externalMatchId),
+  );
+
+  const enrichedFixture = await enrichFixtureWithPlayingXi(fixture, existingMatch);
+  const savedMatch = await upsertSyncedMatchRow(existingMatch, enrichedFixture);
+
+  await loadLeagueBundle();
+  state.selectedMatchId = savedMatch.id;
+  render();
+  flash(
+    existingMatch ? "Match updated from the live feed." : "Match imported from the live feed.",
+    "success",
+  );
+}
+
+async function toggleAutoSync(matchId) {
+  const match = state.matches.find((item) => item.id === matchId);
+  if (!match) {
+    throw new Error("Match not found.");
+  }
+
+  const { error } = await state.client
+    .from("matches")
+    .update({ auto_sync_enabled: !match.auto_sync_enabled })
+    .eq("id", matchId);
+
+  if (error) {
+    throw error;
+  }
+
+  await loadLeagueBundle();
+  render();
+  flash(match.auto_sync_enabled ? "Auto sync paused." : "Auto sync resumed.", "success");
+}
+
+async function syncTrackedMatches({ quiet = true } = {}) {
+  if (state.autoSyncBusy) {
+    return;
+  }
+
+  state.autoSyncBusy = true;
+
+  try {
+    const trackedMatches = state.matches.filter(shouldAutoSyncMatch);
+    for (const match of trackedMatches) {
+      await syncMatchFromProvider(match, {
+        quiet,
+        flashSuccess: false,
+        background: true,
+        skipReload: true,
+      });
+    }
+
+    if (trackedMatches.length) {
+      await loadLeagueBundle();
+      render();
+    }
+  } finally {
+    state.autoSyncBusy = false;
+  }
+}
+
+async function syncMatchFromProvider(
+  match,
+  { quiet = false, flashSuccess = false, background = false, skipReload = false } = {},
+) {
+  if (!match?.external_match_id) {
+    throw new Error("This match is not linked to a live provider yet.");
+  }
+
+  if (!hasCricketApiConfig()) {
+    throw new Error("Add a cricket API key in app/config.js to sync live match data.");
+  }
+
+  markMatchSyncing(match.id, true, background);
+
+  try {
+    const latestSnapshot = await fetchProviderMatchSnapshot(match.external_match_id);
+    const enrichedSnapshot = await enrichFixtureWithPlayingXi(latestSnapshot, match);
+    await upsertSyncedMatchRow(match, enrichedSnapshot);
+
+    if (!match.match_results) {
+      await settleSyncedMatchIfReady(match, enrichedSnapshot);
+    }
+
+    if (!skipReload) {
+      await loadLeagueBundle();
+      render();
+    }
+
+    if (flashSuccess) {
+      flash("Live match data synced.", "success");
+    }
+  } catch (error) {
+    await saveMatchSyncError(match.id, error);
+    if (!quiet) {
+      throw error;
+    }
+  } finally {
+    markMatchSyncing(match.id, false, background);
+  }
+}
+
+function markMatchSyncing(matchId, isSyncing, background) {
+  if (isSyncing) {
+    state.syncingMatchIds.add(matchId);
+  } else {
+    state.syncingMatchIds.delete(matchId);
+  }
+
+  if (!background) {
+    render();
+  }
+}
+
+async function saveMatchSyncError(matchId, error) {
+  if (!matchId || !state.client) {
+    return;
+  }
+
+  const message = cleanText(error?.message || "Sync failed.", 300);
+  await state.client.from("matches").update({ sync_error: message }).eq("id", matchId);
+}
+
+async function upsertSyncedMatchRow(existingMatch, fixture) {
+  const notes =
+    existingMatch?.notes ||
+    "Match synced from CricAPI. Live first-innings ball count controls the 3.1 and 7.1 over locks whenever it is available.";
+  const payload = buildMatchPayloadFromFixture(fixture, existingMatch, notes);
+
+  if (existingMatch?.id) {
+    const { data, error } = await state.client
+      .from("matches")
+      .update(payload)
+      .eq("id", existingMatch.id)
+      .select("*")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  const { data, error } = await state.client
+    .from("matches")
+    .insert({
+      ...payload,
+      league_id: state.activeLeagueId,
+      created_by: state.user.id,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+function buildMatchPayloadFromFixture(fixture, existingMatch, notes) {
+  const startsAt = fixture.starts_at || existingMatch?.starts_at;
+  const hasPlayingXi = getPlayingXiPlayerCountFromPayload(fixture.playing_xi) > 0;
+  const nowIso = new Date().toISOString();
+
+  return {
+    title: fixture.title,
+    team_a: fixture.team_a,
+    team_b: fixture.team_b,
+    venue: fixture.venue || null,
+    starts_at: startsAt,
+    innings_started_at:
+      existingMatch?.innings_started_at ||
+      (fixture.current_innings_ball !== null ? startsAt || nowIso : null),
+    playing_xi_announced_at:
+      existingMatch?.playing_xi_announced_at || (hasPlayingXi ? nowIso : null),
+    picks_deadline_at:
+      existingMatch?.picks_deadline_at || addMinutes(startsAt, 25) || startsAt,
+    score_deadline_at:
+      existingMatch?.score_deadline_at || addMinutes(startsAt, 50) || startsAt,
+    status: fixture.status || existingMatch?.status || "scheduled",
+    notes,
+    provider: "cricapi",
+    external_match_id: fixture.external_match_id,
+    series_name: fixture.series_name || existingMatch?.series_name || "Indian Premier League",
+    playing_xi: fixture.playing_xi || existingMatch?.playing_xi || buildEmptyPlayingXi(),
+    current_innings_ball:
+      fixture.current_innings_ball !== undefined
+        ? fixture.current_innings_ball
+        : existingMatch?.current_innings_ball ?? null,
+    current_over_display:
+      fixture.current_over_display || existingMatch?.current_over_display || null,
+    auto_sync_enabled: existingMatch?.auto_sync_enabled ?? true,
+    last_synced_at: nowIso,
+    sync_error: null,
+  };
+}
+
+async function enrichFixtureWithPlayingXi(fixture, existingMatch) {
+  if (getPlayingXiPlayerCountFromPayload(existingMatch?.playing_xi) > 0) {
+    return fixture;
+  }
+
+  if (!shouldAttemptPlayingXiSync(fixture)) {
+    return fixture;
+  }
+
+  try {
+    const playingXi = await fetchPlayingXiSnapshot(fixture.external_match_id, fixture);
+    if (getPlayingXiPlayerCountFromPayload(playingXi) > 0) {
+      return {
+        ...fixture,
+        playing_xi: playingXi,
+      };
+    }
+  } catch (error) {
+    console.warn("Playing XI sync skipped", error);
+  }
+
+  return fixture;
+}
+
+function shouldAttemptPlayingXiSync(fixture) {
+  const status = computeProviderMatchStatus(fixture);
+  if (status === "live" || status === "locked" || status === "completed") {
+    return true;
+  }
+
+  const startsAt = fixture?.starts_at ? new Date(fixture.starts_at).getTime() : null;
+  if (!startsAt || Number.isNaN(startsAt)) {
+    return false;
+  }
+
+  return startsAt - Date.now() <= 60 * 60 * 1000;
+}
+
+async function settleSyncedMatchIfReady(match, snapshot) {
+  if (computeProviderMatchStatus(snapshot) !== "completed") {
+    return;
+  }
+
+  const scorecard = await fetchMatchScorecard(snapshot.external_match_id);
+  const settlement = extractSettlementPayload(scorecard, match, snapshot);
+  if (!settlement) {
+    return;
+  }
+
+  const { error } = await state.client.rpc("save_match_result", {
+    p_match_id: match.id,
+    p_winner_team: settlement.winner_team,
+    p_first_innings_total: settlement.first_innings_total,
+    p_batsman_runs: settlement.batsman_runs,
+    p_bowler_wickets: settlement.bowler_wickets,
+    p_notes: settlement.notes,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function fetchProviderFixtures() {
+  const candidates = new Map();
+
+  for (const endpoint of ["currentMatches", "matches"]) {
+    try {
+      const payload = await fetchCricketApi(endpoint, { offset: 0 });
+      for (const raw of asArray(payload?.data)) {
+        const fixture = normalizeProviderMatch(raw);
+        if (fixture && isIplFixture(fixture)) {
+          candidates.set(String(fixture.external_match_id), fixture);
+        }
+      }
+    } catch (error) {
+      console.warn(`Unable to load ${endpoint}`, error);
+    }
+  }
+
+  return Array.from(candidates.values()).sort(
+    (left, right) => new Date(left.starts_at).getTime() - new Date(right.starts_at).getTime(),
+  );
+}
+
+async function fetchProviderMatchSnapshot(externalMatchId) {
+  for (const endpoint of ["currentMatches", "matches"]) {
+    try {
+      const payload = await fetchCricketApi(endpoint, { offset: 0 });
+      const rawMatch = asArray(payload?.data).find(
+        (item) => String(resolveProviderMatchId(item)) === String(externalMatchId),
+      );
+
+      if (rawMatch) {
+        return normalizeProviderMatch(rawMatch);
+      }
+    } catch (error) {
+      console.warn(`Unable to fetch ${endpoint} for ${externalMatchId}`, error);
+    }
+  }
+
+  throw new Error("Live provider could not find this match right now.");
+}
+
+async function fetchPlayingXiSnapshot(externalMatchId, fixture) {
+  const payload = await fetchCricketApi("match_squad", { id: externalMatchId });
+  return extractPlayingXiFromPayload(payload, fixture);
+}
+
+async function fetchMatchScorecard(externalMatchId) {
+  return fetchCricketApi("match_scorecard", { id: externalMatchId });
+}
+
+async function fetchCricketApi(endpoint, params = {}) {
+  const baseUrl = String(APP_CONFIG.CRICKET_API_BASE_URL || "https://api.cricapi.com/v1").replace(
+    /\/$/,
+    "",
+  );
+  const url = new URL(`${baseUrl}/${endpoint.replace(/^\//, "")}`);
+  url.searchParams.set("apikey", String(APP_CONFIG.CRICKET_API_KEY || "").trim());
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+
+    url.searchParams.set(key, String(value));
+  }
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Cricket API returned ${response.status}.`);
+  }
+
+  const json = await response.json();
+  if (json?.status === "failure" || json?.status === "error") {
+    throw new Error(json?.reason || json?.message || "Cricket API request failed.");
+  }
+
+  if (json?.error) {
+    throw new Error(json.error);
+  }
+
+  return json;
+}
+
+function normalizeProviderMatch(rawMatch) {
+  const externalMatchId = resolveProviderMatchId(rawMatch);
+  const teams = extractProviderTeams(rawMatch);
+  const startsAt = extractProviderStartsAt(rawMatch);
+
+  if (!externalMatchId || teams.length < 2 || !startsAt) {
+    return null;
+  }
+
+  const liveState = extractProviderLiveState(rawMatch);
+
+  return {
+    external_match_id: externalMatchId,
+    title: cleanText(
+      rawMatch?.name || rawMatch?.matchName || `${teams[0]} vs ${teams[1]}`,
+      120,
+    ),
+    team_a: teams[0],
+    team_b: teams[1],
+    venue: extractProviderVenue(rawMatch),
+    starts_at: startsAt,
+    series_name: cleanNullableText(
+      rawMatch?.series || rawMatch?.seriesName || rawMatch?.competition || "",
+      120,
+    ),
+    status: computeProviderMatchStatus({ raw: rawMatch, ...liveState }),
+    current_innings_ball: liveState.current_innings_ball,
+    current_over_display: liveState.current_over_display,
+    playing_xi: buildEmptyPlayingXi(),
+    raw: rawMatch,
+  };
+}
+
+function extractProviderLiveState(rawMatch) {
+  const scoreEntries = extractProviderScoreEntries(rawMatch);
+  const firstInningsEntry = scoreEntries[0] || null;
+  const firstInningsOvers = extractOversValue(firstInningsEntry);
+  const statusText = cleanText(
+    rawMatch?.status || rawMatch?.ms || rawMatch?.state || rawMatch?.scoreText || "",
+    240,
+  ).toLowerCase();
+  const secondInningsDetected =
+    scoreEntries.length > 1 ||
+    /\bneed\b|\brequire\b|\btarget\b|\bchasing\b|\bwon by\b/.test(statusText);
+
+  if (secondInningsDetected) {
+    return {
+      current_innings_ball: 120,
+      current_over_display:
+        firstInningsOvers !== null ? formatOversValue(firstInningsOvers) : "20.0",
+    };
+  }
+
+  return {
+    current_innings_ball:
+      firstInningsOvers !== null ? oversToBalls(firstInningsOvers) : null,
+    current_over_display:
+      firstInningsOvers !== null ? formatOversValue(firstInningsOvers) : null,
+  };
+}
+
+function computeProviderMatchStatus(snapshot) {
+  const rawMatch = snapshot?.raw || snapshot;
+  const statusText = cleanText(
+    rawMatch?.status || rawMatch?.ms || rawMatch?.state || "",
+    240,
+  ).toLowerCase();
+
+  if (/\bcancelled\b|\babandoned\b|\bno result\b/.test(statusText)) {
+    return "cancelled";
+  }
+
+  if (rawMatch?.matchEnded || /\bwon by\b|\bmatch over\b|\bcompleted\b|\bresult\b/.test(statusText)) {
+    return "completed";
+  }
+
+  const currentBall = toOptionalInteger(snapshot?.current_innings_ball);
+  if (currentBall !== null) {
+    return currentBall >= 43 ? "locked" : "live";
+  }
+
+  if (rawMatch?.matchStarted) {
+    return "live";
+  }
+
+  return "scheduled";
+}
+
+function extractProviderTeams(rawMatch) {
+  const directTeams = asArray(rawMatch?.teams)
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return cleanText(entry, 80);
+      }
+
+      return cleanText(
+        entry?.name || entry?.teamName || entry?.shortname || entry?.shortName || "",
+        80,
+      );
+    })
+    .filter(Boolean);
+
+  const infoTeams = asArray(rawMatch?.teamInfo)
+    .map((entry) =>
+      cleanText(
+        entry?.name || entry?.teamName || entry?.shortname || entry?.shortName || "",
+        80,
+      ),
+    )
+    .filter(Boolean);
+
+  const fallbackTeams = [
+    cleanNullableText(rawMatch?.teamA, 80),
+    cleanNullableText(rawMatch?.teamB, 80),
+  ].filter(Boolean);
+
+  return Array.from(new Set([...directTeams, ...infoTeams, ...fallbackTeams])).slice(0, 2);
+}
+
+function extractProviderStartsAt(rawMatch) {
+  return toIsoDate(
+    rawMatch?.dateTimeGMT ||
+      rawMatch?.dateTime ||
+      rawMatch?.date ||
+      rawMatch?.matchDate ||
+      rawMatch?.startTime,
+  );
+}
+
+function extractProviderVenue(rawMatch) {
+  return cleanNullableText(
+    rawMatch?.venue || rawMatch?.ground || rawMatch?.location || rawMatch?.stadium,
+    120,
+  );
+}
+
+function resolveProviderMatchId(rawMatch) {
+  return cleanNullableText(
+    rawMatch?.id || rawMatch?.matchId || rawMatch?.match_id || rawMatch?.unique_id,
+    120,
+  );
+}
+
+function extractProviderScoreEntries(rawMatch) {
+  const score = rawMatch?.score || rawMatch?.scores || rawMatch?.scorecard || [];
+  return asArray(score);
+}
+
+function extractOversValue(entry) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const value = entry.o ?? entry.overs ?? entry.over ?? entry.ov;
+  return value === undefined || value === null ? null : String(value).trim();
+}
+
+function oversToBalls(oversValue) {
+  const text = String(oversValue || "").trim();
+  if (!text) {
+    return null;
+  }
+
+  const [oversPart, ballsPart = "0"] = text.split(".");
+  const overs = Number.parseInt(oversPart, 10);
+  const balls = Number.parseInt(ballsPart.slice(0, 1) || "0", 10);
+
+  if (Number.isNaN(overs) || Number.isNaN(balls)) {
+    return null;
+  }
+
+  return overs * 6 + balls;
+}
+
+function formatOversValue(oversValue) {
+  const text = String(oversValue || "").trim();
+  return text || "";
+}
+
+function formatBallsAsOvers(ballCount) {
+  const safeBallCount = Math.max(Number(ballCount) || 0, 0);
+  const overs = Math.floor(safeBallCount / 6);
+  const balls = safeBallCount % 6;
+  return `${overs}.${balls}`;
+}
+
+function extractPlayingXiFromPayload(payload, fixture) {
+  const root = payload?.data ?? payload ?? {};
+  const grouped = new Map();
+
+  const addGroup = (teamName, players) => {
+    const resolvedTeamName = resolveFixtureTeamName(teamName, fixture);
+    const normalizedPlayers = normalizePlayerList(players, resolvedTeamName);
+    if (!resolvedTeamName || !normalizedPlayers.length) {
+      return;
+    }
+
+    grouped.set(resolvedTeamName, normalizedPlayers);
+  };
+
+  for (const item of asArray(root)) {
+    addGroup(
+      item?.teamName || item?.name || item?.shortname,
+      item?.players || item?.playingXI || item?.playing_xi || item?.squad,
+    );
+  }
+
+  for (const item of asArray(root?.teamInfo)) {
+    addGroup(
+      item?.teamName || item?.name || item?.shortname,
+      item?.players || item?.playingXI || item?.playing_xi || item?.squad,
+    );
+  }
+
+  const flatPlayers = root?.players || root?.playingXI || root?.playing_xi || root?.squad;
+  if (Array.isArray(flatPlayers)) {
+    const groupedPlayers = groupFlatPlayersByTeam(flatPlayers, fixture);
+    for (const [teamName, players] of Object.entries(groupedPlayers)) {
+      addGroup(teamName, players);
+    }
+  }
+
+  const fallback = buildEmptyPlayingXi();
+  return {
+    team_a: grouped.get(fixture.team_a) || fallback.team_a,
+    team_b: grouped.get(fixture.team_b) || fallback.team_b,
+  };
+}
+
+function groupFlatPlayersByTeam(players, fixture) {
+  const grouped = {
+    [fixture.team_a]: [],
+    [fixture.team_b]: [],
+  };
+
+  for (const entry of players) {
+    const player = normalizePlayerEntry(entry, "");
+    if (!player) {
+      continue;
+    }
+
+    const teamName = resolveFixtureTeamName(player.team, fixture);
+    if (grouped[teamName]) {
+      grouped[teamName].push(player);
+    }
+  }
+
+  return grouped;
+}
+
+function normalizePlayerList(players, fallbackTeam) {
+  const seen = new Set();
+  const normalizedPlayers = [];
+
+  for (const entry of asArray(players)) {
+    const player = normalizePlayerEntry(entry, fallbackTeam);
+    if (!player) {
+      continue;
+    }
+
+    const playerKey = normalizeName(player.name);
+    if (!playerKey || seen.has(playerKey)) {
+      continue;
+    }
+
+    seen.add(playerKey);
+    normalizedPlayers.push(player);
+  }
+
+  return normalizedPlayers;
+}
+
+function normalizePlayerEntry(entry, fallbackTeam) {
+  if (typeof entry === "string") {
+    const name = cleanText(entry, 80);
+    return name ? { name, team: fallbackTeam } : null;
+  }
+
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const name = cleanText(
+    entry?.name || entry?.fullName || entry?.playerName || entry?.player || "",
+    80,
+  );
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name,
+    team: cleanText(
+      entry?.teamName || entry?.team || entry?.team_name || fallbackTeam || "",
+      80,
+    ),
+    role: cleanNullableText(entry?.role || entry?.playerRole || entry?.skill, 40),
+  };
+}
+
+function resolveFixtureTeamName(teamName, fixture) {
+  const normalized = normalizeName(teamName);
+  if (!normalized) {
+    return fixture.team_a;
+  }
+
+  if (normalized === normalizeName(fixture.team_a)) {
+    return fixture.team_a;
+  }
+
+  if (normalized === normalizeName(fixture.team_b)) {
+    return fixture.team_b;
+  }
+
+  return teamName;
+}
+
+function getPlayingXiPlayerCountFromPayload(playingXi) {
+  if (!playingXi || typeof playingXi !== "object") {
+    return 0;
+  }
+
+  return asArray(playingXi.team_a).length + asArray(playingXi.team_b).length;
+}
+
+function buildEmptyPlayingXi() {
+  return {
+    team_a: [],
+    team_b: [],
+  };
+}
+
+function isIplFixture(fixture) {
+  const haystack = [fixture.series_name, fixture.title]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return getSeriesHints().some((hint) => haystack.includes(hint));
+}
+
+function getSeriesHints() {
+  return asArray(APP_CONFIG.CRICKET_SERIES_HINTS)
+    .map((hint) => String(hint || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function extractSettlementPayload(scorecardPayload, match, snapshot) {
+  const root = scorecardPayload?.data ?? scorecardPayload ?? {};
+  const batsmanRuns = extractBatsmanRuns(root);
+  const bowlerWickets = extractBowlerWickets(root);
+  const winnerTeam = findWinningTeam(root, match, snapshot);
+  const firstInningsTotal = extractFirstInningsTotal(root, snapshot);
+
+  if (!winnerTeam || firstInningsTotal === null) {
+    return null;
+  }
+
+  return {
+    winner_team: winnerTeam,
+    first_innings_total: firstInningsTotal,
+    batsman_runs: batsmanRuns,
+    bowler_wickets: bowlerWickets,
+    notes: "Settled automatically from CricAPI scorecard.",
+  };
+}
+
+function extractFirstInningsTotal(root, snapshot) {
+  const snapshotEntries = extractProviderScoreEntries(snapshot?.raw || snapshot);
+  const firstSnapshotEntry = snapshotEntries[0];
+  const candidate =
+    firstSnapshotEntry?.r ??
+    firstSnapshotEntry?.runs ??
+    firstSnapshotEntry?.score ??
+    extractProviderScoreEntries(root)[0]?.r ??
+    extractProviderScoreEntries(root)[0]?.runs;
+
+  const parsed = toOptionalInteger(candidate);
+  return parsed;
+}
+
+function findWinningTeam(root, match, snapshot) {
+  const candidates = [
+    root?.winner,
+    root?.winningTeam,
+    root?.matchWinner,
+    snapshot?.raw?.winner,
+    snapshot?.raw?.winningTeam,
+    snapshot?.raw?.matchWinner,
+    snapshot?.raw?.status,
+    root?.status,
+  ];
+
+  for (const candidate of candidates) {
+    const teamName = matchTeamFromText(candidate, match);
+    if (teamName) {
+      return teamName;
+    }
+  }
+
+  return null;
+}
+
+function matchTeamFromText(value, match) {
+  const text = cleanText(value, 160).toLowerCase();
+  if (!text) {
+    return null;
+  }
+
+  if (text.includes(cleanText(match.team_a, 80).toLowerCase())) {
+    return match.team_a;
+  }
+
+  if (text.includes(cleanText(match.team_b, 80).toLowerCase())) {
+    return match.team_b;
+  }
+
+  return null;
+}
+
+function extractBatsmanRuns(root) {
+  const payload = {};
+
+  for (const entries of collectArraysByKey(root, new Set(["batting", "batsmen", "batters"]))) {
+    for (const entry of entries) {
+      const name = cleanText(
+        entry?.batsman || entry?.name || entry?.playerName || entry?.player || "",
+        80,
+      );
+      const runs = toOptionalInteger(entry?.r ?? entry?.runs ?? entry?.score);
+      if (!name || runs === null) {
+        continue;
+      }
+
+      const key = normalizeName(name);
+      payload[key] = Math.max(payload[key] || 0, runs);
+    }
+  }
+
+  return payload;
+}
+
+function extractBowlerWickets(root) {
+  const payload = {};
+
+  for (const entries of collectArraysByKey(root, new Set(["bowling", "bowlers", "bowler"]))) {
+    for (const entry of entries) {
+      const name = cleanText(
+        entry?.bowler || entry?.name || entry?.playerName || entry?.player || "",
+        80,
+      );
+      const wickets = toOptionalInteger(entry?.w ?? entry?.wickets ?? entry?.wkts);
+      if (!name || wickets === null) {
+        continue;
+      }
+
+      const key = normalizeName(name);
+      payload[key] = Math.max(payload[key] || 0, wickets);
+    }
+  }
+
+  return payload;
+}
+
+function collectArraysByKey(node, keys, results = []) {
+  if (!node || typeof node !== "object") {
+    return results;
+  }
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      collectArraysByKey(item, keys, results);
+    }
+    return results;
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (keys.has(key) && Array.isArray(value)) {
+      results.push(value);
+    }
+
+    if (value && typeof value === "object") {
+      collectArraysByKey(value, keys, results);
+    }
+  }
+
+  return results;
+}
+
+function addMinutes(isoValue, minutes) {
+  if (!isoValue) {
+    return null;
+  }
+
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return new Date(date.getTime() + minutes * 60 * 1000).toISOString();
+}
+
+function toOptionalInteger(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function parseScoreLines(rawText) {

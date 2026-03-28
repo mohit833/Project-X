@@ -16,7 +16,7 @@ declare
   v_code text;
 begin
   loop
-    v_code := upper(substr(encode(gen_random_bytes(6), 'hex'), 1, 8));
+    v_code := upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
     exit when not exists (
       select 1
       from public.leagues
@@ -87,6 +87,21 @@ create table if not exists public.matches (
   check (team_a <> team_b),
   check (score_deadline_at >= picks_deadline_at)
 );
+
+alter table public.matches
+  add column if not exists provider text not null default 'manual',
+  add column if not exists external_match_id text,
+  add column if not exists series_name text,
+  add column if not exists playing_xi jsonb not null default '{"team_a":[],"team_b":[]}'::jsonb,
+  add column if not exists current_innings_ball integer,
+  add column if not exists current_over_display text,
+  add column if not exists auto_sync_enabled boolean not null default false,
+  add column if not exists last_synced_at timestamptz,
+  add column if not exists sync_error text;
+
+create unique index if not exists matches_league_external_match_unique_idx
+on public.matches (league_id, external_match_id)
+where external_match_id is not null;
 
 create table if not exists public.predictions (
   id uuid primary key default gen_random_uuid(),
@@ -578,6 +593,8 @@ declare
   v_batsman text := nullif(trim(coalesce(p_batsman_name, '')), '');
   v_bowler text := nullif(trim(coalesce(p_bowler_name, '')), '');
   v_team_pick text := nullif(trim(coalesce(p_team_pick, '')), '');
+  v_core_locked boolean := false;
+  v_score_locked boolean := false;
 begin
   if v_uid is null then
     raise exception 'You must be signed in.';
@@ -626,8 +643,16 @@ begin
     and user_id = v_uid
   for update;
 
+  if v_match.current_innings_ball is not null then
+    v_core_locked := v_match.current_innings_ball >= 19;
+    v_score_locked := v_match.current_innings_ball >= 43;
+  else
+    v_core_locked := v_match.picks_deadline_at is not null and v_now > v_match.picks_deadline_at;
+    v_score_locked := v_match.score_deadline_at is not null and v_now > v_match.score_deadline_at;
+  end if;
+
   if v_wants_core then
-    if v_now > v_match.picks_deadline_at then
+    if v_core_locked then
       raise exception 'Core picks are locked after the 3.1 over cutoff.';
     end if;
 
@@ -661,7 +686,7 @@ begin
       raise exception 'Predicted score must be zero or higher.';
     end if;
 
-    if v_now > v_match.score_deadline_at
+    if v_score_locked
       and (v_prediction.id is null or v_prediction.predicted_score is distinct from p_predicted_score) then
       raise exception 'Score prediction is locked after the 7.1 over cutoff.';
     end if;
