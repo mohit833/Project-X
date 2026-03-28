@@ -667,10 +667,6 @@ begin
       raise exception 'Core picks are locked after the 3.1 over cutoff.';
     end if;
 
-    if not v_is_admin and coalesce(v_prediction.core_locked_due_to_pre_xi, false) then
-      raise exception 'These core picks were posted before the playing XI and cannot be changed.';
-    end if;
-
     if exists (
       select 1
       from public.predictions
@@ -760,10 +756,11 @@ begin
         core_submitted_at = case when v_wants_core then v_now else core_submitted_at end,
         score_submitted_at = case when p_predicted_score is not null then v_now else score_submitted_at end,
         core_locked_due_to_pre_xi = case
-          when v_wants_core
-            and not v_is_admin
-            and (v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at)
-            then true
+          when v_wants_core then
+            (
+              not v_is_admin
+              and (v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at)
+            )
           else core_locked_due_to_pre_xi
         end
     where id = v_prediction.id

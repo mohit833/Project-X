@@ -27,6 +27,7 @@ const state = {
   providerFixtures: [],
   loadingProviderFixtures: false,
   syncingMatchIds: new Set(),
+  lastPredictionConflictKey: null,
   installPromptEvent: null,
   isStandalone:
     window.matchMedia?.("(display-mode: standalone)")?.matches ||
@@ -1104,9 +1105,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
   const canEditScore = isAdmin || liveWindow.scoreWindowOpen;
   const adminOverrideActive =
     isAdmin &&
-    (!liveWindow.coreWindowOpen ||
-      !liveWindow.scoreWindowOpen ||
-      Boolean(prediction?.core_locked_due_to_pre_xi));
+    (!liveWindow.coreWindowOpen || !liveWindow.scoreWindowOpen);
   const windowMessage = liveWindow.coreWindowOpen
     ? "Choose one batsman, one bowler, and one winning team before 3.1 overs. Score unlocks right after that."
     : liveWindow.scoreWindowOpen
@@ -1209,7 +1208,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
                       <small>
                         ${
                           hasSquad
-                            ? "Pick from the synced match squads. Batsman includes batters and all-rounders; bowler includes bowlers and all-rounders. Duplicate batsman and bowler picks are blocked league-wide on a first-come basis."
+                            ? "Pick from the synced match squads. Batsman includes batters and all-rounders; bowler includes bowlers and all-rounders. Duplicate batsman and bowler picks are blocked league-wide on a first-come basis. If a chosen player does not make the final XI / scorecard, that pick stays at 0 points unless you change it before 3.1 overs."
                             : "Waiting for the match squads to sync from the provider. The dropdowns will populate automatically once squad data is available."
                         }
                       </small>
@@ -1276,7 +1275,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
                   <div class="chip-list">
                     ${
                       prediction.core_locked_due_to_pre_xi
-                        ? `<span class="chip"><strong>Locked</strong>Submitted before XI</span>`
+                        ? `<span class="chip"><strong>Before XI</strong>Saved before team news</span>`
                         : ""
                     }
                     ${
@@ -1855,6 +1854,16 @@ async function savePrediction(form) {
   }
   const predictedScore =
     predictedScoreRaw === "" ? null : Number.parseInt(predictedScoreRaw, 10);
+  const conflict = findPredictionConflict(matchId, {
+    batsman_name: batsmanName,
+    bowler_name: bowlerName,
+    predicted_score: predictedScore,
+  });
+  if (conflict) {
+    state.lastPredictionConflictKey = conflict.key;
+    showTransientToast("Same combination exists for this match. Choose a different pick.", "error");
+    return;
+  }
 
   const { error } = await state.client.rpc("submit_prediction", {
     p_match_id: matchId,
@@ -1869,6 +1878,7 @@ async function savePrediction(form) {
   }
 
   await loadLeagueBundle();
+  state.lastPredictionConflictKey = null;
   render();
   flash("Prediction saved.", "success");
 }
@@ -2090,13 +2100,15 @@ async function handleClick(event) {
 
 function handleChange(event) {
   const target = event.target;
-  if (!(target instanceof HTMLInputElement)) {
+  if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) {
     return;
   }
 
-  if (target.id === "create-starts-at" && !document.getElementById("create-picks-at")?.value) {
+  if (target instanceof HTMLInputElement && target.id === "create-starts-at" && !document.getElementById("create-picks-at")?.value) {
     document.getElementById("create-picks-at").value = target.value;
   }
+
+  maybeWarnPredictionConflict(target.form);
 }
 
 function handleInput(event) {
@@ -2112,6 +2124,8 @@ function handleInput(event) {
   ) {
     target.value = target.value.replace(/\D+/g, "");
   }
+
+  maybeWarnPredictionConflict(target.form);
 }
 
 function getActiveLeague() {
@@ -2309,6 +2323,88 @@ function hasCricketApiConfig() {
   return !state.demoMode && Boolean(String(APP_CONFIG.CRICKET_API_KEY || "").trim());
 }
 
+function findPredictionConflict(matchId, draftPrediction) {
+  if (!matchId) {
+    return null;
+  }
+
+  const selfUserId = state.user?.id;
+  const otherPredictions = getPredictionsForMatch(matchId).filter(
+    (entry) => entry.user_id !== selfUserId,
+  );
+  const batsmanKey = normalizeName(draftPrediction?.batsman_name);
+  const bowlerKey = normalizeName(draftPrediction?.bowler_name);
+  const predictedScore = Number(draftPrediction?.predicted_score);
+
+  if (
+    batsmanKey &&
+    bowlerKey &&
+    otherPredictions.some(
+      (entry) =>
+        normalizeName(entry.batsman_name) === batsmanKey &&
+        normalizeName(entry.bowler_name) === bowlerKey,
+    )
+  ) {
+    return { key: `combo:${matchId}:${batsmanKey}:${bowlerKey}` };
+  }
+
+  if (
+    batsmanKey &&
+    otherPredictions.some((entry) => normalizeName(entry.batsman_name) === batsmanKey)
+  ) {
+    return { key: `batsman:${matchId}:${batsmanKey}` };
+  }
+
+  if (
+    bowlerKey &&
+    otherPredictions.some((entry) => normalizeName(entry.bowler_name) === bowlerKey)
+  ) {
+    return { key: `bowler:${matchId}:${bowlerKey}` };
+  }
+
+  if (
+    Number.isFinite(predictedScore) &&
+    otherPredictions.some((entry) => Number(entry.predicted_score) === predictedScore)
+  ) {
+    return { key: `score:${matchId}:${predictedScore}` };
+  }
+
+  return null;
+}
+
+function maybeWarnPredictionConflict(form) {
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+
+  if (form.id !== "core-prediction-form" && form.id !== "score-prediction-form") {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const conflict = findPredictionConflict(String(formData.get("match_id") || ""), {
+    batsman_name: cleanNullableText(formData.get("batsman_name"), 80),
+    bowler_name: cleanNullableText(formData.get("bowler_name"), 80),
+    predicted_score: (() => {
+      const raw = String(formData.get("predicted_score") || "").trim();
+      return /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : null;
+    })(),
+  });
+
+  const conflictKey = conflict?.key || null;
+  if (!conflictKey) {
+    state.lastPredictionConflictKey = null;
+    return;
+  }
+
+  if (state.lastPredictionConflictKey === conflictKey) {
+    return;
+  }
+
+  state.lastPredictionConflictKey = conflictKey;
+  showTransientToast("Same combination exists for this match. Choose a different pick.", "error");
+}
+
 function calculateScorePointsForPrediction(prediction, result, matchPredictions) {
   const actualScore = Number(result?.first_innings_total);
   const predictedScore = Number(prediction?.predicted_score);
@@ -2350,8 +2446,7 @@ function getLiveWindowState(match, prediction) {
     ? Date.now() >= new Date(match.picks_deadline_at).getTime()
     : false;
   const coreLocked =
-    Boolean(prediction?.core_locked_due_to_pre_xi) ||
-    (currentBall !== null ? currentBall >= CORE_LOCK_BALL : coreLockedByTime);
+    currentBall !== null ? currentBall >= CORE_LOCK_BALL : coreLockedByTime;
   const scoreLocked = currentBall !== null ? currentBall >= SCORE_LOCK_BALL : scoreLockedByTime;
   const scoreWindowOpen =
     !scoreLocked &&
@@ -3682,7 +3777,7 @@ function extractSettlementPayload(scorecardPayload, match, snapshot) {
     first_innings_total: firstInningsTotal,
     batsman_runs: batsmanRuns,
     bowler_wickets: bowlerWickets,
-    notes: "Settled automatically from CricAPI scorecard.",
+    notes: "Settled automatically from CricAPI scorecard. Players missing from the final scorecard receive 0 points.",
   };
 }
 
@@ -3919,6 +4014,23 @@ function flash(message, tone = "info") {
     state.notice = null;
     render();
   }, 4200);
+}
+
+function showTransientToast(message, tone = "info") {
+  let toast = document.getElementById("floating-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "floating-toast";
+    toast.className = "floating-toast";
+    document.body.appendChild(toast);
+  }
+
+  toast.textContent = String(message || "");
+  toast.className = `floating-toast notice notice-${tone} is-visible`;
+  window.clearTimeout(showTransientToast.timerId);
+  showTransientToast.timerId = window.setTimeout(() => {
+    toast.classList.remove("is-visible");
+  }, 2800);
 }
 
 function cleanText(value, maxLength) {
