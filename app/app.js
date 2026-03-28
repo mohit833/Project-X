@@ -311,9 +311,16 @@ async function init() {
     },
   });
 
-  const {
+  let {
     data: { session },
   } = await state.client.auth.getSession();
+
+  if (!session) {
+    const recoveredSession = await recoverSessionFromUrl();
+    if (recoveredSession) {
+      session = recoveredSession;
+    }
+  }
 
   state.session = session;
   state.user = session?.user ?? null;
@@ -355,6 +362,54 @@ async function init() {
   }
 
   render();
+}
+
+async function recoverSessionFromUrl() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  const authCode = url.searchParams.get("code");
+  const tokenHash = url.searchParams.get("token_hash");
+  const authType = url.searchParams.get("type");
+
+  if (!authCode && !tokenHash) {
+    return null;
+  }
+
+  if (authCode) {
+    const { data, error } = await state.client.auth.exchangeCodeForSession(authCode);
+    if (error) {
+      throw error;
+    }
+
+    clearAuthCallbackParams(url);
+    return data?.session ?? null;
+  }
+
+  if (tokenHash && authType) {
+    const { data, error } = await state.client.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: authType,
+    });
+    if (error) {
+      throw error;
+    }
+
+    clearAuthCallbackParams(url);
+    return data?.session ?? null;
+  }
+
+  return null;
+}
+
+function clearAuthCallbackParams(url) {
+  url.searchParams.delete("code");
+  url.searchParams.delete("token_hash");
+  url.searchParams.delete("type");
+  url.searchParams.delete("next");
+  window.history.replaceState({}, document.title, url.toString());
 }
 
 function loadDemoState() {
