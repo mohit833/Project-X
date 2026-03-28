@@ -50,13 +50,13 @@ declare
   v_now timestamptz := timezone('utc', now());
   v_match public.matches%rowtype;
   v_member public.league_members%rowtype;
+  v_is_admin boolean := false;
   v_prediction public.predictions%rowtype;
   v_prediction_id uuid;
   v_wants_core boolean;
   v_batsman text := nullif(trim(coalesce(p_batsman_name, '')), '');
   v_bowler text := nullif(trim(coalesce(p_bowler_name, '')), '');
   v_team_pick text := nullif(trim(coalesce(p_team_pick, '')), '');
-  v_core_window_open boolean := true;
   v_core_locked boolean := false;
   v_score_window_open boolean := false;
   v_score_locked boolean := false;
@@ -85,6 +85,7 @@ begin
     raise exception 'You are not part of this league.';
   end if;
 
+  v_is_admin := v_member.role = 'admin';
   v_wants_core := v_batsman is not null or v_bowler is not null or v_team_pick is not null;
 
   if v_wants_core and (v_batsman is null or v_bowler is null or v_team_pick is null) then
@@ -108,10 +109,6 @@ begin
     and user_id = v_uid
   for update;
 
-  if v_match.starts_at is not null then
-    v_core_window_open := v_now >= (v_match.starts_at - interval '2 hours');
-  end if;
-
   if v_match.current_innings_ball is not null then
     v_core_locked := v_match.current_innings_ball >= 19;
     v_score_window_open := v_match.current_innings_ball >= 19 and v_match.current_innings_ball < 43;
@@ -125,15 +122,15 @@ begin
   end if;
 
   if v_wants_core then
-    if not v_core_window_open then
-      raise exception 'Core picks open only in the 2 hours before the match starts.';
+    if public.normalize_pick(v_batsman) = public.normalize_pick(v_bowler) then
+      raise exception 'Batsman and bowler must be two different players.';
     end if;
 
-    if v_core_locked then
+    if not v_is_admin and v_core_locked then
       raise exception 'Core picks are locked after the 3.1 over cutoff.';
     end if;
 
-    if coalesce(v_prediction.core_locked_due_to_pre_xi, false) then
+    if not v_is_admin and coalesce(v_prediction.core_locked_due_to_pre_xi, false) then
       raise exception 'These core picks were posted before the playing XI and cannot be changed.';
     end if;
 
@@ -163,7 +160,7 @@ begin
       raise exception 'Predicted score must be zero or higher.';
     end if;
 
-    if (not v_score_window_open or v_score_locked)
+    if (not v_is_admin and (not v_score_window_open or v_score_locked))
       and (v_prediction.id is null or v_prediction.predicted_score is distinct from p_predicted_score) then
       if v_score_locked then
         raise exception 'Score prediction is locked after the 7.1 over cutoff.';
@@ -209,7 +206,9 @@ begin
       case when v_wants_core then v_now else null end,
       case when p_predicted_score is not null then v_now else null end,
       case
-        when v_wants_core and (v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at)
+        when v_wants_core
+          and not v_is_admin
+          and (v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at)
           then true
         else false
       end
@@ -224,7 +223,9 @@ begin
         core_submitted_at = case when v_wants_core then v_now else core_submitted_at end,
         score_submitted_at = case when p_predicted_score is not null then v_now else score_submitted_at end,
         core_locked_due_to_pre_xi = case
-          when v_wants_core and (v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at)
+          when v_wants_core
+            and not v_is_admin
+            and (v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at)
             then true
           else core_locked_due_to_pre_xi
         end
@@ -238,3 +239,74 @@ exception
     raise exception 'That pick was just taken by someone else. Refresh and choose a different option.';
 end;
 $$;
+
+create or replace view public.prediction_points
+with (security_invoker = true)
+as
+with scored_predictions as (
+  select
+    p.id as prediction_id,
+    p.league_id,
+    p.match_id,
+    p.member_id,
+    p.user_id,
+    coalesce((mr.batsman_runs ->> p.batsman_key)::integer, 0) as batsman_points,
+    coalesce((mr.bowler_wickets ->> p.bowler_key)::integer, 0) * 20 as bowler_points,
+    case
+      when mr.winner_team is not null and lower(mr.winner_team) = lower(coalesce(p.team_pick, '')) then 50
+      else 0
+    end as team_points,
+    mr.first_innings_total,
+    p.predicted_score,
+    case
+      when mr.first_innings_total is not null and p.predicted_score is not null
+        then abs(mr.first_innings_total - p.predicted_score)
+      else null
+    end as score_delta,
+    max(
+      case
+        when mr.first_innings_total is not null and p.predicted_score = mr.first_innings_total then 1
+        else 0
+      end
+    ) over (partition by p.match_id) as has_exact_score,
+    min(
+      case
+        when mr.first_innings_total is not null and p.predicted_score is not null
+          then abs(mr.first_innings_total - p.predicted_score)
+        else null
+      end
+    ) over (partition by p.match_id) as nearest_score_delta
+  from public.predictions p
+  left join public.match_results mr
+    on mr.match_id = p.match_id
+),
+resolved_scores as (
+  select
+    prediction_id,
+    league_id,
+    match_id,
+    member_id,
+    user_id,
+    batsman_points,
+    bowler_points,
+    case
+      when first_innings_total is null or predicted_score is null then 0
+      when predicted_score = first_innings_total then 10
+      when has_exact_score = 0 and score_delta = nearest_score_delta then 10
+      else 0
+    end as score_points,
+    team_points
+  from scored_predictions
+)
+select
+  prediction_id,
+  league_id,
+  match_id,
+  member_id,
+  user_id,
+  batsman_points,
+  bowler_points,
+  score_points,
+  team_points,
+  batsman_points + bowler_points + score_points + team_points as total_points
+from resolved_scores;

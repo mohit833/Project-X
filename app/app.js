@@ -244,9 +244,9 @@ const DEMO_PREDICTIONS = [
   },
 ];
 
-const CORE_OPEN_WINDOW_MS = 2 * 60 * 60 * 1000;
 const CORE_LOCK_BALL = 19;
 const SCORE_LOCK_BALL = 43;
+const SQUAD_SYNC_LOOKAHEAD_MS = 2 * 60 * 60 * 1000;
 const IPL_OFFICIAL_COMPETITION_URL = "https://scores.iplt20.com/ipl/mc/competition.js";
 const IPL_OFFICIAL_DEFAULT_FEED_BASE_URL = "https://scores.iplt20.com/ipl/feeds";
 
@@ -738,7 +738,7 @@ function renderHero() {
             </div>
             <div class="chip-list">
               <span class="chip"><strong>No duplicates</strong>First come, first serve</span>
-              <span class="chip"><strong>2h entry window</strong>Picks open two hours before each match</span>
+              <span class="chip"><strong>Player picks</strong>Open until 3.1 overs</span>
               <span class="chip"><strong>Live innings clock</strong>3.1 and 7.1 overs lock automatically</span>
               <span class="chip"><strong>Auto scoring</strong>Completed matches settle themselves</span>
             </div>
@@ -1061,15 +1061,13 @@ function renderMatchCard(match) {
   const active = match.id === getSelectedMatch()?.id;
   const entries = getPredictionsForMatch(match.id);
   const liveWindow = getLiveWindowState(match, getCurrentUserPrediction(match.id));
-  const availabilityLabel = !liveWindow.submissionWindowOpen
-    ? `Opens ${formatDate(liveWindow.submissionStartsAt) || "2h before start"}`
-    : liveWindow.coreWindowOpen
-      ? "Player picks open"
-      : liveWindow.scoreWindowOpen
-        ? "Score phase open"
-        : match.match_results
-          ? "Scored"
-          : "Locked";
+  const availabilityLabel = liveWindow.coreWindowOpen
+    ? "Player picks open"
+    : liveWindow.scoreWindowOpen
+      ? "Score phase open"
+      : match.match_results
+        ? "Scored"
+        : "Locked";
 
   return `
     <button class="match-card ${active ? "active" : ""}" type="button" data-action="select-match" data-match-id="${match.id}">
@@ -1096,23 +1094,41 @@ function renderMatchDetail(match, prediction, isAdmin) {
   const status = computeMatchStatus(match);
   const entries = getPredictionsForMatch(match.id);
   const liveWindow = getLiveWindowState(match, prediction);
-  const coreLocked = liveWindow.coreLocked;
-  const scoreLocked = liveWindow.scoreLocked;
   const scoreResult = match.match_results;
   const squadGroups = getPlayingXiGroups(match);
   const hasSquad = squadGroups.some((group) => group.players.length);
   const batsmanOptions = getSelectablePlayers(match, "batsman", prediction);
   const bowlerOptions = getSelectablePlayers(match, "bowler", prediction);
   const syncSummary = getMatchSyncSummary(match);
-  const windowMessage = !liveWindow.submissionWindowOpen
-    ? `Player picks open ${escapeHtml(
-        formatDate(liveWindow.submissionStartsAt) || "2 hours before the match",
-      )}.`
-    : liveWindow.coreWindowOpen
-      ? "Choose one batsman, one bowler, and one winning team before 3.1 overs."
-      : liveWindow.scoreWindowOpen
-        ? "Player picks are locked. Exact first-innings score is open until 7.1 overs."
-        : "All prediction windows are locked for this match.";
+  const canEditCore = isAdmin || liveWindow.coreWindowOpen;
+  const canEditScore = isAdmin || liveWindow.scoreWindowOpen;
+  const adminOverrideActive =
+    isAdmin &&
+    (!liveWindow.coreWindowOpen ||
+      !liveWindow.scoreWindowOpen ||
+      Boolean(prediction?.core_locked_due_to_pre_xi));
+  const windowMessage = liveWindow.coreWindowOpen
+    ? "Choose one batsman, one bowler, and one winning team before 3.1 overs. Score unlocks right after that."
+    : liveWindow.scoreWindowOpen
+      ? "Player picks are locked. Exact first-innings score is open until 7.1 overs."
+      : "All standard prediction windows are locked for this match.";
+  const predictionMessage = adminOverrideActive
+    ? `${windowMessage} Admin override is active for you, but duplicate batsman, bowler, and score picks are still blocked.`
+    : windowMessage;
+  const coreButtonLabel = !hasSquad
+    ? "Waiting for squad sync"
+    : canEditCore
+      ? adminOverrideActive && !liveWindow.coreWindowOpen
+        ? "Save player picks (admin override)"
+        : "Save player picks"
+      : "Player picks locked";
+  const scoreButtonLabel = canEditScore
+    ? adminOverrideActive && !liveWindow.scoreWindowOpen
+      ? "Save score prediction (admin override)"
+      : "Save score prediction"
+    : liveWindow.scoreLocked
+      ? "Score locked"
+      : "Score opens after 3.1 overs";
 
   return `
     <section class="panel">
@@ -1149,9 +1165,14 @@ function renderMatchDetail(match, prediction, isAdmin) {
           <div class="section-head">
             <div>
               <h4>Your prediction</h4>
-              <p>${windowMessage}</p>
+              <p>${predictionMessage}</p>
             </div>
           </div>
+          ${
+            adminOverrideActive
+              ? `<div class="notice notice-info">Admin override is active for timing locks on this match. Uniqueness rules still apply to you like everyone else.</div>`
+              : ""
+          }
           ${
             state.demoMode
               ? `<div class="notice notice-info">Demo mode is read-only. Configure Supabase to save real entries.</div>`
@@ -1162,19 +1183,19 @@ function renderMatchDetail(match, prediction, isAdmin) {
                     <input type="hidden" name="match_id" value="${match.id}" />
                     <div class="field">
                       <label for="batsman-name">Batsman</label>
-                      <select id="batsman-name" name="batsman_name" ${!liveWindow.coreWindowOpen || !hasSquad ? "disabled" : ""}>
+                      <select id="batsman-name" name="batsman_name" ${!canEditCore || !hasSquad ? "disabled" : ""}>
                         ${renderPlayerSelectOptions("Choose batsman", batsmanOptions, prediction?.batsman_name)}
                       </select>
                     </div>
                     <div class="field">
                       <label for="bowler-name">Bowler</label>
-                      <select id="bowler-name" name="bowler_name" ${!liveWindow.coreWindowOpen || !hasSquad ? "disabled" : ""}>
+                      <select id="bowler-name" name="bowler_name" ${!canEditCore || !hasSquad ? "disabled" : ""}>
                         ${renderPlayerSelectOptions("Choose bowler", bowlerOptions, prediction?.bowler_name)}
                       </select>
                     </div>
                     <div class="field">
                       <label for="team-pick">Winning team</label>
-                      <select id="team-pick" name="team_pick" ${!liveWindow.coreWindowOpen ? "disabled" : ""}>
+                      <select id="team-pick" name="team_pick" ${!canEditCore ? "disabled" : ""}>
                         <option value="">Choose a winner</option>
                         <option value="${escapeAttribute(match.team_a)}" ${
                           prediction?.team_pick === match.team_a ? "selected" : ""
@@ -1184,29 +1205,17 @@ function renderMatchDetail(match, prediction, isAdmin) {
                         }>${escapeHtml(match.team_b)}</option>
                       </select>
                     </div>
-                    <div class="field">
-                      <label for="predicted-score">1st innings total</label>
-                      <input id="predicted-score" type="number" name="predicted_score" min="0" placeholder="182" value="${escapeAttribute(
-                        prediction?.predicted_score ?? "",
-                      )}" ${scoreLocked ? "disabled" : ""} />
-                    </div>
                     <div class="field span-2">
                       <small>
                         ${
                           hasSquad
-                            ? "Pick from the synced match squads. Duplicate batsmen and bowlers are blocked league-wide on a first-come basis."
+                            ? "Pick from the synced match squads. Batsman includes batters and all-rounders; bowler includes bowlers and all-rounders. Duplicate batsman and bowler picks are blocked league-wide on a first-come basis."
                             : "Waiting for the match squads to sync from the provider. The dropdowns will populate automatically once squad data is available."
                         }
                       </small>
                     </div>
                     <div class="field span-2">
-                      <button class="btn" type="submit" ${!liveWindow.coreWindowOpen || !hasSquad ? "disabled" : ""}>${
-                        !liveWindow.submissionWindowOpen
-                          ? "Opens 2 hours before start"
-                          : coreLocked
-                            ? "Player picks locked"
-                            : "Save player picks"
-                      }</button>
+                      <button class="btn" type="submit" ${!canEditCore || !hasSquad ? "disabled" : ""}>${coreButtonLabel}</button>
                     </div>
                   </form>
                   <form class="form-grid" id="score-prediction-form" style="margin-top: 1rem;">
@@ -1222,22 +1231,16 @@ function renderMatchDetail(match, prediction, isAdmin) {
                         maxlength="3"
                         placeholder="182"
                         value="${escapeAttribute(prediction?.predicted_score ?? "")}"
-                        ${!liveWindow.scoreWindowOpen ? "disabled" : ""}
+                        ${!canEditScore ? "disabled" : ""}
                       />
                     </div>
                     <div class="field span-2">
                       <small>
-                        Exact score prediction opens right after 3.1 overs and locks at 7.1 overs. Only numbers are allowed.
+                        Exact score prediction opens right after 3.1 overs and locks at 7.1 overs. Only numbers are allowed. If nobody hits the exact total, the nearest score gets the points.
                       </small>
                     </div>
                     <div class="field span-2">
-                      <button class="ghost-btn" type="submit" ${!liveWindow.scoreWindowOpen ? "disabled" : ""}>${
-                        liveWindow.scoreWindowOpen
-                          ? "Save score prediction"
-                          : scoreLocked
-                            ? "Score locked"
-                            : "Score opens after 3.1 overs"
-                      }</button>
+                      <button class="ghost-btn" type="submit" ${!canEditScore ? "disabled" : ""}>${scoreButtonLabel}</button>
                     </div>
                   </form>
                 `
@@ -1839,12 +1842,19 @@ async function savePrediction(form) {
     throw new Error("Submit batsman, bowler, and winning team together.");
   }
 
+  if (
+    batsmanName &&
+    bowlerName &&
+    normalizeName(batsmanName) === normalizeName(bowlerName)
+  ) {
+    throw new Error("Batsman and bowler must be two different players.");
+  }
+
+  if (predictedScoreRaw !== "" && !/^\d+$/.test(predictedScoreRaw)) {
+    throw new Error("Score prediction must contain numbers only.");
+  }
   const predictedScore =
     predictedScoreRaw === "" ? null : Number.parseInt(predictedScoreRaw, 10);
-
-  if (predictedScoreRaw !== "" && Number.isNaN(predictedScore)) {
-    throw new Error("Score prediction must be a number.");
-  }
 
   const { error } = await state.client.rpc("submit_prediction", {
     p_match_id: matchId,
@@ -2253,6 +2263,13 @@ function buildLeaderboardFromMatches(members, predictions, matches) {
   }));
 
   const rowByUserId = Object.fromEntries(rows.map((row) => [row.user_id, row]));
+  const predictionsByMatchId = new Map();
+
+  for (const prediction of predictions) {
+    const entries = predictionsByMatchId.get(prediction.match_id) || [];
+    entries.push(prediction);
+    predictionsByMatchId.set(prediction.match_id, entries);
+  }
 
   for (const prediction of predictions) {
     const row = rowByUserId[prediction.user_id];
@@ -2273,7 +2290,11 @@ function buildLeaderboardFromMatches(members, predictions, matches) {
     const bowlerKey = normalizeName(prediction.bowler_name);
     row.batsman_points += Number(result.batsman_runs?.[batsmanKey] || 0);
     row.bowler_points += Number(result.bowler_wickets?.[bowlerKey] || 0) * 20;
-    row.score_points += Number(result.first_innings_total) === Number(prediction.predicted_score) ? 10 : 0;
+    row.score_points += calculateScorePointsForPrediction(
+      prediction,
+      result,
+      predictionsByMatchId.get(prediction.match_id) || [],
+    );
     row.team_points += result.winner_team === prediction.team_pick ? 50 : 0;
     row.total_points =
       row.batsman_points + row.bowler_points + row.score_points + row.team_points;
@@ -2288,19 +2309,37 @@ function hasCricketApiConfig() {
   return !state.demoMode && Boolean(String(APP_CONFIG.CRICKET_API_KEY || "").trim());
 }
 
+function calculateScorePointsForPrediction(prediction, result, matchPredictions) {
+  const actualScore = Number(result?.first_innings_total);
+  const predictedScore = Number(prediction?.predicted_score);
+
+  if (!Number.isFinite(actualScore) || !Number.isFinite(predictedScore)) {
+    return 0;
+  }
+
+  if (predictedScore === actualScore) {
+    return 10;
+  }
+
+  const validPredictions = matchPredictions
+    .map((entry) => Number(entry?.predicted_score))
+    .filter((value) => Number.isFinite(value));
+
+  if (!validPredictions.length || validPredictions.includes(actualScore)) {
+    return 0;
+  }
+
+  const nearestDelta = Math.min(...validPredictions.map((value) => Math.abs(value - actualScore)));
+  return Math.abs(predictedScore - actualScore) === nearestDelta ? 10 : 0;
+}
+
 function getLiveWindowState(match, prediction) {
   const currentBall = toOptionalInteger(match?.current_innings_ball);
   const currentOverDisplay =
     cleanNullableText(match?.current_over_display, 20) ||
     (currentBall !== null ? formatBallsAsOvers(currentBall) : null);
-  const startsAtMs = match?.starts_at ? new Date(match.starts_at).getTime() : null;
-  const submissionStartsAt =
-    startsAtMs && !Number.isNaN(startsAtMs)
-      ? new Date(startsAtMs - CORE_OPEN_WINDOW_MS).toISOString()
-      : null;
-  const submissionWindowOpen = submissionStartsAt
-    ? Date.now() >= new Date(submissionStartsAt).getTime()
-    : true;
+  const submissionStartsAt = null;
+  const submissionWindowOpen = true;
   const coreLockedByTime = match?.picks_deadline_at
     ? Date.now() > new Date(match.picks_deadline_at).getTime()
     : false;
@@ -2317,7 +2356,7 @@ function getLiveWindowState(match, prediction) {
   const scoreWindowOpen =
     !scoreLocked &&
     (currentBall !== null ? currentBall >= CORE_LOCK_BALL : scoreWindowOpenByTime);
-  const coreWindowOpen = submissionWindowOpen && !coreLocked;
+  const coreWindowOpen = !coreLocked;
 
   return {
     currentBall,
@@ -2339,11 +2378,9 @@ function formatCoreLockLabel(match, liveWindow) {
       : `Open until 3.1 overs (${liveWindow.currentOverDisplay || "live"})`;
   }
 
-  if (!liveWindow.submissionWindowOpen) {
-    return `Opens ${formatDate(liveWindow.submissionStartsAt) || "2 hours before start"}`;
-  }
-
-  return formatDate(match?.picks_deadline_at) || "Waiting for live clock";
+  return liveWindow.coreLocked
+    ? `Locked ${formatDate(match?.picks_deadline_at) || "after 3.1 overs"}`
+    : `Open until ${formatDate(match?.picks_deadline_at) || "3.1 overs"}`;
 }
 
 function formatScoreLockLabel(match, liveWindow) {
@@ -2354,10 +2391,12 @@ function formatScoreLockLabel(match, liveWindow) {
   }
 
   if (!liveWindow.scoreWindowOpen && !liveWindow.scoreLocked) {
-    return `Opens after core lock (${formatDate(match?.picks_deadline_at) || "3.1 overs"})`;
+    return `Opens after ${formatDate(match?.picks_deadline_at) || "3.1 overs"}`;
   }
 
-  return formatDate(match?.score_deadline_at) || "Waiting for live clock";
+  return liveWindow.scoreLocked
+    ? `Locked ${formatDate(match?.score_deadline_at) || "after 7.1 overs"}`
+    : `Open until ${formatDate(match?.score_deadline_at) || "7.1 overs"}`;
 }
 
 function getPlayingXiGroups(match) {
@@ -2394,7 +2433,10 @@ function getSelectablePlayers(match, role, prediction) {
     teamName: group.teamName,
     players: group.players.filter((player) => {
       const playerKey = normalizeName(player.name);
-      return !taken.has(playerKey) || playerKey === currentKey;
+      return (
+        playerSupportsSelectionRole(player, role) &&
+        (!taken.has(playerKey) || playerKey === currentKey)
+      );
     }),
   }));
 }
@@ -2793,7 +2835,7 @@ function shouldAttemptPlayingXiSync(fixture) {
     return false;
   }
 
-  return startsAt - Date.now() <= CORE_OPEN_WINDOW_MS;
+  return startsAt - Date.now() <= SQUAD_SYNC_LOOKAHEAD_MS;
 }
 
 async function settleSyncedMatchIfReady(match, snapshot) {
@@ -3508,6 +3550,32 @@ function normalizePlayerList(players, fallbackTeam) {
   }
 
   return normalizedPlayers;
+}
+
+function playerSupportsSelectionRole(player, selectionRole) {
+  const normalizedRole = normalizeName(player?.role || "");
+  if (!normalizedRole) {
+    return true;
+  }
+
+  const isAllrounder =
+    normalizedRole.includes("all-rounder") || normalizedRole.includes("allrounder");
+  const isBatter =
+    normalizedRole.includes("batsman") ||
+    normalizedRole.includes("batter") ||
+    normalizedRole.includes("keeper") ||
+    normalizedRole.includes("wk");
+  const isBowler = normalizedRole.includes("bowler");
+
+  if (selectionRole === "batsman") {
+    return isBatter || isAllrounder;
+  }
+
+  if (selectionRole === "bowler") {
+    return isBowler || isAllrounder;
+  }
+
+  return true;
 }
 
 function normalizePlayerEntry(entry, fallbackTeam) {
