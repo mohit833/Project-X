@@ -1,6 +1,6 @@
 const DEFAULT_COMPETITION_URL = "https://scores.iplt20.com/ipl/mc/competition.js";
 const DEFAULT_FEED_BASE_URL =
-  "https://ipl-stats-sports-mechanic.s3.ap-south-1.amazonaws.com/ipl/feeds";
+  "https://scores.iplt20.com/ipl/feeds";
 const DEFAULT_TEAM_BASE_URL = "https://www.iplt20.com/teams";
 const ALLOWED_HOSTS = new Set([
   "scores.iplt20.com",
@@ -72,6 +72,45 @@ module.exports = async (req, res) => {
       }
 
       res.status(200).send(JSON.stringify({ teamSlug, season, players }));
+      return;
+    }
+
+    if (kind === "match-summary") {
+      const matchId = String(req.query.matchId || "").trim();
+      if (!matchId) {
+        res.status(400).send(JSON.stringify({ error: "matchId is required." }));
+        return;
+      }
+
+      const payload = await fetchJsonpPayload(`${DEFAULT_FEED_BASE_URL}/${matchId}-matchsummary.js`);
+      res.status(200).send(JSON.stringify(payload));
+      return;
+    }
+
+    if (kind === "match-innings") {
+      const matchId = String(req.query.matchId || "").trim();
+      const inningsNo = String(req.query.inningsNo || "").replace(/\D+/g, "").slice(0, 2);
+      if (!matchId || !inningsNo) {
+        res.status(400).send(JSON.stringify({ error: "matchId and inningsNo are required." }));
+        return;
+      }
+
+      const payload = await fetchJsonpPayload(
+        `${DEFAULT_FEED_BASE_URL}/${matchId}-Innings${inningsNo}.js`,
+      );
+      res.status(200).send(JSON.stringify(payload));
+      return;
+    }
+
+    if (kind === "match-squad") {
+      const matchId = String(req.query.matchId || "").trim();
+      if (!matchId) {
+        res.status(400).send(JSON.stringify({ error: "matchId is required." }));
+        return;
+      }
+
+      const payload = await fetchJsonpPayload(`${DEFAULT_FEED_BASE_URL}/${matchId}-squad.js`);
+      res.status(200).send(JSON.stringify(payload));
       return;
     }
 
