@@ -2491,7 +2491,7 @@ async function loadProviderFixtures({ quiet = false, flashSuccess = true } = {})
   render();
 
   try {
-    const fixtures = await fetchProviderFixtures();
+    const { fixtures, warning } = await fetchProviderFixtures();
     const existingMatchMap = new Map(
       state.matches
         .filter((item) => item.external_match_id)
@@ -2525,10 +2525,10 @@ async function loadProviderFixtures({ quiet = false, flashSuccess = true } = {})
     render();
 
     if (flashSuccess && !quiet) {
-      flash(
-        `IPL schedule synced. ${created} created, ${updated} refreshed.`,
-        "success",
-      );
+      const successMessage = warning
+        ? `IPL schedule synced. ${created} created, ${updated} refreshed. ${warning}`
+        : `IPL schedule synced. ${created} created, ${updated} refreshed.`;
+      flash(successMessage, warning ? "info" : "success");
     }
   } finally {
     state.loadingProviderFixtures = false;
@@ -2864,14 +2864,26 @@ async function fetchTargetIplSeries(targetYear) {
 
 async function fetchProviderFixtures() {
   const seriesYear = getTargetSeasonYear();
-  const [officialFixtures, providerFixtures] = await Promise.all([
-    fetchOfficialIplFixtures(seriesYear),
-    fetchCricketApiSeasonFixtures(seriesYear),
-  ]);
+  const officialFixtures = await fetchOfficialIplFixtures(seriesYear);
+  let providerFixtures = [];
+  let warning = null;
 
-  return mergeOfficialFixturesWithProviderData(officialFixtures, providerFixtures).sort(
-    (left, right) => new Date(left.starts_at).getTime() - new Date(right.starts_at).getTime(),
-  );
+  if (hasCricketApiConfig()) {
+    try {
+      providerFixtures = await fetchCricketApiSeasonFixtures(seriesYear);
+    } catch (error) {
+      console.warn("CricAPI season enrichment failed", error);
+      warning =
+        "Official IPL fixtures were imported, but CricAPI enrichment is unavailable right now. Live squads and auto scoring will attach when that feed responds again.";
+    }
+  }
+
+  return {
+    fixtures: mergeOfficialFixturesWithProviderData(officialFixtures, providerFixtures).sort(
+      (left, right) => new Date(left.starts_at).getTime() - new Date(right.starts_at).getTime(),
+    ),
+    warning,
+  };
 }
 
 async function fetchCricketApiSeasonFixtures(targetYear) {
