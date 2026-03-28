@@ -30,6 +30,8 @@ const state = {
   lastPredictionConflictKey: null,
   teamSquads: {},
   loadingTeamSquads: new Set(),
+  pendingPhoneAuth: readPendingPhoneAuthState(),
+  endingLeagueId: null,
   installPromptEvent: null,
   isStandalone:
     window.matchMedia?.("(display-mode: standalone)")?.matches ||
@@ -250,6 +252,7 @@ const DEMO_PREDICTIONS = [
 const CORE_LOCK_BALL = 19;
 const SCORE_LOCK_BALL = 43;
 const SQUAD_SYNC_LOOKAHEAD_MS = 2 * 60 * 60 * 1000;
+const PHONE_AUTH_STORAGE_KEY = "ipl-phone-auth-pending";
 const OFFICIAL_IPL_TEAM_SLUGS = {
   "chennai-super-kings": "chennai-super-kings",
   csk: "chennai-super-kings",
@@ -275,6 +278,65 @@ const OFFICIAL_IPL_TEAM_SLUGS = {
 };
 const IPL_OFFICIAL_COMPETITION_URL = "https://scores.iplt20.com/ipl/mc/competition.js";
 const IPL_OFFICIAL_DEFAULT_FEED_BASE_URL = "https://scores.iplt20.com/ipl/feeds";
+
+function readPendingPhoneAuthState() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PHONE_AUTH_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    const phone = normalizePhoneNumber(parsed?.phone || "");
+    const displayName = cleanNullableText(parsed?.display_name, 40);
+    if (!phone) {
+      return null;
+    }
+
+    return {
+      phone,
+      display_name: displayName || "",
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function persistPendingPhoneAuthState(phone, displayName = "") {
+  const normalizedPhone = normalizePhoneNumber(phone);
+  const cleanedName = cleanNullableText(displayName, 40) || "";
+  state.pendingPhoneAuth = normalizedPhone
+    ? { phone: normalizedPhone, display_name: cleanedName }
+    : null;
+
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!normalizedPhone) {
+    window.localStorage.removeItem(PHONE_AUTH_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(
+    PHONE_AUTH_STORAGE_KEY,
+    JSON.stringify({
+      phone: normalizedPhone,
+      display_name: cleanedName,
+    }),
+  );
+}
+
+function clearPendingPhoneAuthState() {
+  state.pendingPhoneAuth = null;
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(PHONE_AUTH_STORAGE_KEY);
+  }
+}
 
 document.addEventListener("submit", handleSubmit);
 document.addEventListener("click", handleClick);
@@ -324,6 +386,9 @@ async function init() {
 
   state.session = session;
   state.user = session?.user ?? null;
+  if (state.user) {
+    clearPendingPhoneAuthState();
+  }
 
   state.client.auth.onAuthStateChange((_event, sessionData) => {
     state.session = sessionData;
@@ -344,6 +409,7 @@ async function init() {
       return;
     }
 
+    clearPendingPhoneAuthState();
     render();
     window.setTimeout(async () => {
       try {
@@ -481,6 +547,7 @@ async function ensureProfile() {
     pendingName ||
     state.user?.user_metadata?.display_name ||
     state.user?.user_metadata?.full_name ||
+    (state.user?.phone ? `Player ${state.user.phone.slice(-4)}` : "") ||
     state.user?.email?.split("@")[0] ||
     "Player";
 
@@ -513,7 +580,7 @@ async function ensureProfile() {
 
   state.profile = data;
 
-  if (pendingName) {
+  if (pendingName !== null) {
     window.localStorage.removeItem("ipl-pending-display-name");
   }
 }
@@ -549,10 +616,13 @@ async function loadMemberships() {
   const stillValid = state.memberships.some(
     (membership) => membership.league_id === state.activeLeagueId,
   );
+  const preferredMembership =
+    state.memberships.find((membership) => membership.leagues?.status === "active") ||
+    state.memberships[0];
 
   state.activeLeagueId = stillValid
     ? state.activeLeagueId
-    : state.memberships[0].league_id;
+    : preferredMembership?.league_id || null;
 }
 
 async function loadLeagueBundle() {
@@ -761,8 +831,8 @@ function render() {
             state.user
               ? `
                 <span class="chip"><strong>${escapeHtml(
-                  state.profile?.display_name || state.user.email || "Player",
-                )}</strong>${escapeHtml(state.user.email || "")}</span>
+                  state.profile?.display_name || getUserIdentityLabel() || "Player",
+                )}</strong>${escapeHtml(getUserIdentityLabel())}</span>
                 ${
                   state.demoMode
                     ? ""
@@ -903,13 +973,14 @@ function renderSetupPanel() {
 
 function renderAccountPanel() {
   const isAuthenticated = Boolean(state.user);
+  const pendingPhone = state.pendingPhoneAuth?.phone || "";
 
   return `
     <section class="panel" id="account">
       <div class="section-head">
         <div>
           <h3>${isAuthenticated ? "Your account" : "Sign in"}</h3>
-          <p>${isAuthenticated ? "Update the name your friends will see on the board." : "Magic link login keeps this simple for the whole group."}</p>
+          <p>${isAuthenticated ? "Update the name your friends will see on the board." : "Phone OTP keeps the league simple. Once this device is verified, it stays signed in automatically."}</p>
         </div>
       </div>
       ${
@@ -929,8 +1000,8 @@ function renderAccountPanel() {
                   )}" required />
                 </div>
                 <div class="field">
-                  <label>Email</label>
-                  <input value="${escapeAttribute(state.user.email || "")}" disabled />
+                  <label>${state.user.phone ? "Phone" : "Email"}</label>
+                  <input value="${escapeAttribute(getUserIdentityLabel())}" disabled />
                 </div>
                 <div class="field span-2">
                   <button class="btn" type="submit">Save display name</button>
@@ -938,19 +1009,47 @@ function renderAccountPanel() {
               </form>
             `
             : `
-              <form class="form-grid" id="magic-link-form">
-                <div class="field">
-                  <label for="auth-display-name">Display name</label>
-                  <input id="auth-display-name" name="display_name" maxlength="40" placeholder="Mohit" required />
-                </div>
-                <div class="field">
-                  <label for="auth-email">Email</label>
-                  <input id="auth-email" type="email" name="email" placeholder="you@example.com" required />
-                </div>
-                <div class="field span-2">
-                  <button class="btn" type="submit">Send magic link</button>
-                </div>
-              </form>
+              ${
+                pendingPhone
+                  ? `
+                    <form class="form-grid" id="phone-otp-form">
+                      <div class="field">
+                        <label>Phone number</label>
+                        <input value="${escapeAttribute(maskPhoneNumber(pendingPhone))}" disabled />
+                      </div>
+                      <div class="field">
+                        <label for="auth-otp">OTP</label>
+                        <input id="auth-otp" name="otp" inputmode="numeric" maxlength="6" placeholder="123456" required />
+                      </div>
+                      <div class="field span-2">
+                        <small>Enter the SMS code for ${escapeHtml(maskPhoneNumber(pendingPhone))}. If the same browser already has a saved session, the app will keep you signed in next time.</small>
+                      </div>
+                      <div class="field span-2 auth-actions">
+                        <button class="btn" type="submit">Verify OTP</button>
+                        <button class="ghost-btn" type="button" data-action="resend-phone-otp">Resend OTP</button>
+                        <button class="ghost-btn" type="button" data-action="reset-phone-auth">Change phone number</button>
+                      </div>
+                    </form>
+                  `
+                  : `
+                    <form class="form-grid" id="phone-auth-form">
+                      <div class="field">
+                        <label for="auth-phone">Phone number</label>
+                        <input id="auth-phone" name="phone" inputmode="tel" placeholder="+91 9876543210" required />
+                      </div>
+                      <div class="field">
+                        <label for="auth-display-name">Display name</label>
+                        <input id="auth-display-name" name="display_name" maxlength="40" placeholder="Only needed the first time" />
+                      </div>
+                      <div class="field span-2">
+                        <small>Use your phone number once, verify the OTP, and this device will remember your league access until you sign out.</small>
+                      </div>
+                      <div class="field span-2">
+                        <button class="btn" type="submit">Send OTP</button>
+                      </div>
+                    </form>
+                  `
+              }
             `
       }
     </section>
@@ -969,8 +1068,8 @@ function renderLeagueAccessPanel() {
           <h3>${state.memberships.length ? "Your leagues" : "Create or join a league"}</h3>
           <p>${
             state.memberships.length
-              ? "Switch leagues here, or create and join another one."
-              : "One person creates the tournament. Everyone else joins with the invite code."
+              ? "Your joined leagues stay saved on this device until the creator ends them."
+              : "One person creates the tournament. Everyone else joins once with the invite code."
           }</p>
         </div>
       </div>
@@ -981,9 +1080,10 @@ function renderLeagueAccessPanel() {
               ${state.memberships
                 .map((membership) => {
                   const active = membership.league_id === state.activeLeagueId;
+                  const leagueStatus = membership.leagues?.status === "archived" ? "Ended" : "Active";
                   return `
                     <button class="${active ? "btn" : "ghost-btn"}" type="button" data-action="switch-league" data-league-id="${membership.league_id}">
-                      ${escapeHtml(membership.leagues.name)} · ${escapeHtml(membership.role)}
+                      ${escapeHtml(membership.leagues.name)} · ${escapeHtml(membership.role)} · ${escapeHtml(leagueStatus)}
                     </button>
                   `;
                 })
@@ -1057,6 +1157,8 @@ function renderDashboard() {
   const match = getSelectedMatch();
   const prediction = getCurrentUserPrediction(match?.id);
   const isAdmin = currentMembership()?.role === "admin";
+  const leagueWinner = getLeagueWinner();
+  const leagueEnded = league?.status === "archived";
 
   return `
     <section class="stack" id="dashboard">
@@ -1064,10 +1166,26 @@ function renderDashboard() {
         <div class="section-head">
           <div>
             <h3>${escapeHtml(league?.name || "League dashboard")}</h3>
-            <p>${escapeHtml(league?.season || "")} · Invite code <strong>${escapeHtml(league?.invite_code || "-")}</strong></p>
+            <p>${
+              leagueEnded
+                ? `${escapeHtml(league?.season || "")} · League ended`
+                : `${escapeHtml(league?.season || "")} · Invite code <strong>${escapeHtml(league?.invite_code || "-")}</strong>`
+            }</p>
           </div>
           <div class="split-line">
+            ${
+              leagueEnded
+                ? `<span class="tag tag-completed">Ended</span>`
+                : ""
+            }
             <span class="tag ${isAdmin ? "tag-admin" : "tag-member"}">${isAdmin ? "Admin" : "Member"}</span>
+            ${
+              isAdmin && !leagueEnded
+                ? `<button class="ghost-btn" type="button" data-action="end-league" data-league-id="${league?.id}" ${
+                    state.endingLeagueId === league?.id ? "disabled" : ""
+                  }>${state.endingLeagueId === league?.id ? "Ending league..." : "End league"}</button>`
+                : ""
+            }
             <button class="ghost-btn" type="button" data-action="refresh-league">Refresh</button>
           </div>
         </div>
@@ -1085,6 +1203,15 @@ function renderDashboard() {
             <strong>${getCurrentUserPoints()}</strong>
           </div>
         </div>
+        ${
+          leagueEnded && leagueWinner
+            ? `
+              <div class="notice notice-success" style="margin-top: 1rem;">
+                League winner: <strong>${escapeHtml(leagueWinner.display_name)}</strong> with ${escapeHtml(leagueWinner.total_points)} points.
+              </div>
+            `
+            : ""
+        }
       </section>
 
       <section class="grid-3">
@@ -1110,7 +1237,7 @@ function renderDashboard() {
           ${
             match
               ? `
-                ${renderMatchDetail(match, prediction, isAdmin)}
+                ${renderMatchDetail(match, prediction, isAdmin, leagueEnded)}
               `
               : `<section class="panel"><div class="empty-state">${
                   isAdmin
@@ -1118,7 +1245,7 @@ function renderDashboard() {
                     : "Choose a match to start."
                 }</div></section>`
           }
-          ${isAdmin ? renderAdminTools(match) : ""}
+          ${isAdmin && !leagueEnded ? renderAdminTools(match) : ""}
         </div>
 
         <div class="stack">
@@ -1201,7 +1328,7 @@ function renderMatchCard(match) {
   `;
 }
 
-function renderMatchDetail(match, prediction, isAdmin) {
+function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
   const status = computeMatchStatus(match);
   const entries = getPredictionsForMatch(match.id);
   const liveWindow = getLiveWindowState(match, prediction);
@@ -1212,20 +1339,25 @@ function renderMatchDetail(match, prediction, isAdmin) {
   const batsmanOptions = getSelectablePlayers(match, "batsman", prediction);
   const bowlerOptions = getSelectablePlayers(match, "bowler", prediction);
   const syncSummary = getMatchSyncSummary(match);
-  const canEditCore = isAdmin || liveWindow.coreWindowOpen;
-  const canEditScore = isAdmin || liveWindow.scoreWindowOpen;
+  const canEditCore = !leagueEnded && (isAdmin || liveWindow.coreWindowOpen);
+  const canEditScore = !leagueEnded && (isAdmin || liveWindow.scoreWindowOpen);
   const adminOverrideActive =
+    !leagueEnded &&
     isAdmin &&
     (!liveWindow.coreWindowOpen || !liveWindow.scoreWindowOpen);
-  const windowMessage = liveWindow.coreWindowOpen
-    ? "Choose one batsman, one bowler, and one winning team before 3.1 overs. Score unlocks right after that."
-    : liveWindow.scoreWindowOpen
-      ? "Player picks are locked. Exact first-innings score is open until 7.1 overs."
-      : "All standard prediction windows are locked for this match.";
+  const windowMessage = leagueEnded
+    ? "This league has ended. Picks stay visible, but no more changes can be made."
+    : liveWindow.coreWindowOpen
+      ? "Choose one batsman, one bowler, and one winning team before 3.1 overs. Score unlocks right after that."
+      : liveWindow.scoreWindowOpen
+        ? "Player picks are locked. Exact first-innings score is open until 7.1 overs."
+        : "All standard prediction windows are locked for this match.";
   const predictionMessage = adminOverrideActive
     ? `${windowMessage} Admin override is active for you, but duplicate batsman-bowler combinations and score picks are still blocked.`
     : windowMessage;
-  const coreButtonLabel = !hasSquad
+  const coreButtonLabel = leagueEnded
+    ? "League ended"
+    : !hasSquad
     ? squadsLoading
       ? "Loading official team squads"
       : "Waiting for official team squads"
@@ -1234,7 +1366,9 @@ function renderMatchDetail(match, prediction, isAdmin) {
         ? "Save player picks (admin override)"
         : "Save player picks"
       : "Player picks locked";
-  const scoreButtonLabel = canEditScore
+  const scoreButtonLabel = leagueEnded
+    ? "League ended"
+    : canEditScore
     ? adminOverrideActive && !liveWindow.scoreWindowOpen
       ? "Save score prediction (admin override)"
       : "Save score prediction"
@@ -1749,8 +1883,13 @@ async function handleSubmit(event) {
   event.preventDefault();
 
   try {
-    if (form.id === "magic-link-form") {
-      await submitMagicLink(form);
+    if (form.id === "phone-auth-form") {
+      await requestPhoneOtp(form);
+      return;
+    }
+
+    if (form.id === "phone-otp-form") {
+      await verifyPhoneOtp(form);
       return;
     }
 
@@ -1803,38 +1942,79 @@ async function handleSubmit(event) {
   }
 }
 
-async function submitMagicLink(form) {
+async function requestPhoneOtp(form) {
   const formData = new FormData(form);
-  const email = String(formData.get("email") || "").trim().toLowerCase();
-  const displayName = cleanText(formData.get("display_name"), 40);
+  const phone = normalizePhoneNumber(formData.get("phone"));
+  const displayName = cleanNullableText(formData.get("display_name"), 40);
 
-  if (!email || !displayName) {
-    throw new Error("Please add both your email and display name.");
+  if (!phone) {
+    throw new Error("Enter a valid phone number, like +91 9876543210.");
   }
 
-  window.localStorage.setItem("ipl-pending-display-name", displayName);
+  await withPendingForm(form, "Sending OTP...", async () => {
+    await sendPhoneOtpCode(phone, displayName || "");
+  });
+
+  persistPendingPhoneAuthState(phone, displayName || "");
+  render();
+  flash(`OTP sent to ${maskPhoneNumber(phone)}. Enter the code to continue.`, "success");
+}
+
+async function verifyPhoneOtp(form) {
+  const formData = new FormData(form);
+  const otp = String(formData.get("otp") || "").replace(/\D+/g, "");
+  const pendingPhone = state.pendingPhoneAuth?.phone || "";
+
+  if (!pendingPhone) {
+    throw new Error("Start again with your phone number so we know where to verify the OTP.");
+  }
+
+  if (!/^\d{4,8}$/.test(otp)) {
+    throw new Error("Enter the OTP code from the SMS.");
+  }
+
+  let verifiedSession = null;
+
+  await withPendingForm(form, "Verifying OTP...", async () => {
+    const { data, error } = await state.client.auth.verifyOtp({
+      phone: pendingPhone,
+      token: otp,
+      type: "sms",
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    verifiedSession = data?.session ?? null;
+  });
+
+  clearPendingPhoneAuthState();
+  state.session = verifiedSession;
+  state.user = verifiedSession?.user ?? state.user;
+  render();
+  flash("Phone verified. You are signed in on this device.", "success");
+}
+
+async function sendPhoneOtpCode(phone, displayName = "") {
+  window.localStorage.setItem("ipl-pending-display-name", displayName || "");
 
   const { error } = await state.client.auth.signInWithOtp({
-    email,
+    phone,
     options: {
-      emailRedirectTo: getMagicLinkRedirectUrl(),
+      channel: "sms",
       shouldCreateUser: true,
-      data: {
-        display_name: displayName,
-      },
+      data: displayName
+        ? {
+            display_name: displayName,
+          }
+        : {},
     },
   });
 
   if (error) {
     throw error;
   }
-
-  flash(`Magic link sent to ${email}. Open it on this device to sign in.`, "success");
-  form.reset();
-}
-
-function getMagicLinkRedirectUrl() {
-  return new URL(window.location.origin + window.location.pathname).toString();
 }
 
 async function saveProfile(form) {
@@ -1864,17 +2044,19 @@ async function saveProfile(form) {
     return;
   }
 
-  const { error } = await state.client.rpc("sync_member_display_name", {
-    p_display_name: displayName,
+  await withPendingForm(form, "Saving...", async () => {
+    const { error } = await state.client.rpc("sync_member_display_name", {
+      p_display_name: displayName,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    await ensureProfile();
+    await loadMemberships();
+    await loadLeagueBundle();
   });
-
-  if (error) {
-    throw error;
-  }
-
-  await ensureProfile();
-  await loadMemberships();
-  await loadLeagueBundle();
   render();
   flash("Display name updated.", "success");
 }
@@ -1888,28 +2070,31 @@ async function createLeague(form) {
     throw new Error("League name is required.");
   }
 
-  const { error } = await state.client.rpc("create_league", {
-    p_name: name,
-    p_season: season || "IPL 2026",
-  });
-
-  if (error) {
-    throw error;
-  }
-
-  await loadMemberships();
-  await loadLeagueBundle();
   let scheduleMessage = "League created. Share the invite code with your friends.";
 
-  if (!state.demoMode) {
-    try {
-      await loadProviderFixtures({ quiet: true, flashSuccess: false });
-      scheduleMessage = "League created and the IPL schedule was synced.";
-    } catch (syncError) {
-      console.error(syncError);
-      scheduleMessage = "League created, but IPL schedule sync needs a retry from admin tools.";
+  await withPendingForm(form, "Creating league...", async () => {
+    const { error } = await state.client.rpc("create_league", {
+      p_name: name,
+      p_season: season || "IPL 2026",
+    });
+
+    if (error) {
+      throw error;
     }
-  }
+
+    await loadMemberships();
+    await loadLeagueBundle();
+
+    if (!state.demoMode) {
+      try {
+        await loadProviderFixtures({ quiet: true, flashSuccess: false });
+        scheduleMessage = "League created and the IPL schedule was synced.";
+      } catch (syncError) {
+        console.error(syncError);
+        scheduleMessage = "League created, but IPL schedule sync needs a retry from admin tools.";
+      }
+    }
+  });
 
   render();
   form.reset();
@@ -1924,16 +2109,18 @@ async function joinLeague(form) {
     throw new Error("Invite code is required.");
   }
 
-  const { error } = await state.client.rpc("join_league", {
-    p_invite_code: inviteCode,
+  await withPendingForm(form, "Joining league...", async () => {
+    const { error } = await state.client.rpc("join_league", {
+      p_invite_code: inviteCode,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    await loadMemberships();
+    await loadLeagueBundle();
   });
-
-  if (error) {
-    throw error;
-  }
-
-  await loadMemberships();
-  await loadLeagueBundle();
   render();
   form.reset();
   flash(`Joined league with code ${inviteCode}.`, "success");
@@ -1979,19 +2166,25 @@ async function savePrediction(form) {
     );
   }
 
-  const { error } = await state.client.rpc("submit_prediction", {
-    p_match_id: matchId,
-    p_batsman_name: batsmanName,
-    p_bowler_name: bowlerName,
-    p_team_pick: teamPick,
-    p_predicted_score: predictedScore,
-  });
+  await withPendingForm(
+    form,
+    form.id === "score-prediction-form" ? "Saving score..." : "Saving picks...",
+    async () => {
+      const { error } = await state.client.rpc("submit_prediction", {
+        p_match_id: matchId,
+        p_batsman_name: batsmanName,
+        p_bowler_name: bowlerName,
+        p_team_pick: teamPick,
+        p_predicted_score: predictedScore,
+      });
 
-  if (error) {
-    throw error;
-  }
+      if (error) {
+        throw error;
+      }
 
-  await loadLeagueBundle();
+      await loadLeagueBundle();
+    },
+  );
   state.lastPredictionConflictKey = null;
   render();
   flash("Prediction saved.", "success");
@@ -2032,13 +2225,15 @@ async function saveAdminOverride(form) {
     sync_error: null,
   };
 
-  const { error } = await state.client.from("matches").update(payload).eq("id", matchId);
+  await withPendingForm(form, "Saving override...", async () => {
+    const { error } = await state.client.from("matches").update(payload).eq("id", matchId);
 
-  if (error) {
-    throw error;
-  }
+    if (error) {
+      throw error;
+    }
 
-  await loadLeagueBundle();
+    await loadLeagueBundle();
+  });
   render();
   flash("Admin override saved.", "success");
 }
@@ -2060,24 +2255,26 @@ async function createMatch(form) {
     throw new Error("Please fill all required match fields.");
   }
 
-  const { error } = await state.client.rpc("create_match", {
-    p_league_id: leagueId,
-    p_title: title,
-    p_team_a: teamA,
-    p_team_b: teamB,
-    p_starts_at: startsAt,
-    p_playing_xi_announced_at: xiAt,
-    p_picks_deadline_at: picksAt,
-    p_score_deadline_at: scoreAt,
-    p_venue: venue,
-    p_notes: notes,
+  await withPendingForm(form, "Creating match...", async () => {
+    const { error } = await state.client.rpc("create_match", {
+      p_league_id: leagueId,
+      p_title: title,
+      p_team_a: teamA,
+      p_team_b: teamB,
+      p_starts_at: startsAt,
+      p_playing_xi_announced_at: xiAt,
+      p_picks_deadline_at: picksAt,
+      p_score_deadline_at: scoreAt,
+      p_venue: venue,
+      p_notes: notes,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    await loadLeagueBundle();
   });
-
-  if (error) {
-    throw error;
-  }
-
-  await loadLeagueBundle();
   render();
   form.reset();
   flash("Match created.", "success");
@@ -2086,21 +2283,23 @@ async function createMatch(form) {
 async function saveTimeline(form) {
   const formData = new FormData(form);
 
-  const { error } = await state.client.rpc("save_match_timeline", {
-    p_match_id: String(formData.get("match_id") || ""),
-    p_status: cleanNullableText(formData.get("status"), 20),
-    p_starts_at: toIsoDate(formData.get("starts_at")),
-    p_innings_started_at: toIsoDate(formData.get("innings_started_at")),
-    p_playing_xi_announced_at: toIsoDate(formData.get("playing_xi_announced_at")),
-    p_picks_deadline_at: toIsoDate(formData.get("picks_deadline_at")),
-    p_score_deadline_at: toIsoDate(formData.get("score_deadline_at")),
+  await withPendingForm(form, "Saving timeline...", async () => {
+    const { error } = await state.client.rpc("save_match_timeline", {
+      p_match_id: String(formData.get("match_id") || ""),
+      p_status: cleanNullableText(formData.get("status"), 20),
+      p_starts_at: toIsoDate(formData.get("starts_at")),
+      p_innings_started_at: toIsoDate(formData.get("innings_started_at")),
+      p_playing_xi_announced_at: toIsoDate(formData.get("playing_xi_announced_at")),
+      p_picks_deadline_at: toIsoDate(formData.get("picks_deadline_at")),
+      p_score_deadline_at: toIsoDate(formData.get("score_deadline_at")),
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    await loadLeagueBundle();
   });
-
-  if (error) {
-    throw error;
-  }
-
-  await loadLeagueBundle();
   render();
   flash("Match timeline updated.", "success");
 }
@@ -2119,20 +2318,22 @@ async function saveResult(form) {
     throw new Error("Winner and first innings total are required.");
   }
 
-  const { error } = await state.client.rpc("save_match_result", {
-    p_match_id: matchId,
-    p_winner_team: winnerTeam,
-    p_first_innings_total: total,
-    p_batsman_runs: batsmanRuns,
-    p_bowler_wickets: bowlerWickets,
-    p_notes: notes,
+  await withPendingForm(form, "Saving result...", async () => {
+    const { error } = await state.client.rpc("save_match_result", {
+      p_match_id: matchId,
+      p_winner_team: winnerTeam,
+      p_first_innings_total: total,
+      p_batsman_runs: batsmanRuns,
+      p_bowler_wickets: bowlerWickets,
+      p_notes: notes,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    await loadLeagueBundle();
   });
-
-  if (error) {
-    throw error;
-  }
-
-  await loadLeagueBundle();
   render();
   flash("Match result saved and points recalculated.", "success");
 }
@@ -2147,8 +2348,28 @@ async function handleClick(event) {
 
   try {
     if (action === "sign-out") {
+      clearPendingPhoneAuthState();
       await state.client.auth.signOut();
       flash("Signed out.", "success");
+      return;
+    }
+
+    if (action === "reset-phone-auth") {
+      clearPendingPhoneAuthState();
+      render();
+      return;
+    }
+
+    if (action === "resend-phone-otp") {
+      const pendingPhone = state.pendingPhoneAuth?.phone || "";
+      if (!pendingPhone) {
+        throw new Error("Add your phone number first.");
+      }
+
+      await withButtonPending(target, "Sending OTP...", async () => {
+        await sendPhoneOtpCode(pendingPhone, state.pendingPhoneAuth?.display_name || "");
+      });
+      flash(`Fresh OTP sent to ${maskPhoneNumber(pendingPhone)}.`, "success");
       return;
     }
 
@@ -2169,6 +2390,37 @@ async function handleClick(event) {
       await loadLeagueBundle();
       render();
       flash("League refreshed.", "success");
+      return;
+    }
+
+    if (action === "end-league") {
+      const leagueId = target.getAttribute("data-league-id") || state.activeLeagueId;
+      if (!leagueId) {
+        throw new Error("League not found.");
+      }
+
+      if (!window.confirm("End this league and freeze the invite code? The winner will stay visible on the league card.")) {
+        return;
+      }
+
+      state.endingLeagueId = leagueId;
+      render();
+      try {
+        const { error } = await state.client.rpc("end_league", {
+          p_league_id: leagueId,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        await loadMemberships();
+        await loadLeagueBundle();
+        flash("League ended. The winner is now shown on the league widget.", "success");
+      } finally {
+        state.endingLeagueId = null;
+        render();
+      }
       return;
     }
 
@@ -2245,9 +2497,119 @@ function handleInput(event) {
   maybeWarnPredictionConflict(target.form);
 }
 
+function getUserIdentityLabel() {
+  return state.user?.phone || state.user?.email || "";
+}
+
+function maskPhoneNumber(phone) {
+  const normalized = normalizePhoneNumber(phone);
+  if (!normalized) {
+    return "";
+  }
+
+  const visibleTail = normalized.slice(-4);
+  const prefix = normalized.startsWith("+91") ? "+91" : normalized.slice(0, Math.max(normalized.length - 8, 2));
+  return `${prefix} •••• ${visibleTail}`;
+}
+
+function normalizePhoneNumber(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const cleaned = raw.replace(/[^\d+]/g, "");
+  if (!cleaned) {
+    return "";
+  }
+
+  let normalized = cleaned;
+  if (normalized.startsWith("00")) {
+    normalized = `+${normalized.slice(2)}`;
+  }
+
+  if (normalized.startsWith("+")) {
+    normalized = `+${normalized.slice(1).replace(/\D+/g, "")}`;
+  } else {
+    const digits = normalized.replace(/\D+/g, "");
+    if (digits.length === 10) {
+      normalized = `+91${digits}`;
+    } else if (digits.length === 12 && digits.startsWith("91")) {
+      normalized = `+${digits}`;
+    } else {
+      normalized = `+${digits}`;
+    }
+  }
+
+  return /^\+\d{10,15}$/.test(normalized) ? normalized : "";
+}
+
+async function withPendingForm(form, label, task) {
+  const elements = Array.from(form.elements || []);
+  const submitButtons = Array.from(form.querySelectorAll('button[type="submit"]'));
+
+  for (const element of elements) {
+    if (!(element instanceof HTMLElement)) {
+      continue;
+    }
+
+    if ("disabled" in element) {
+      element.dataset.wasDisabled = element.disabled ? "true" : "false";
+      element.disabled = true;
+    }
+  }
+
+  for (const button of submitButtons) {
+    button.dataset.originalLabel = button.textContent || "";
+    button.textContent = label;
+    button.classList.add("is-loading");
+  }
+
+  try {
+    return await task();
+  } finally {
+    for (const element of elements) {
+      if (!(element instanceof HTMLElement)) {
+        continue;
+      }
+
+      if ("disabled" in element) {
+        element.disabled = element.dataset.wasDisabled === "true";
+        delete element.dataset.wasDisabled;
+      }
+    }
+
+    for (const button of submitButtons) {
+      button.textContent = button.dataset.originalLabel || button.textContent;
+      button.classList.remove("is-loading");
+      delete button.dataset.originalLabel;
+    }
+  }
+}
+
+async function withButtonPending(button, label, task) {
+  const originalLabel = button.textContent || "";
+  const originalDisabled = button.disabled;
+  button.disabled = true;
+  button.textContent = label;
+  button.classList.add("is-loading");
+
+  try {
+    return await task();
+  } finally {
+    button.disabled = originalDisabled;
+    button.textContent = originalLabel;
+    button.classList.remove("is-loading");
+  }
+}
+
 function getActiveLeague() {
   return state.memberships.find((membership) => membership.league_id === state.activeLeagueId)
     ?.leagues;
+}
+
+function getLeagueWinner() {
+  return state.leaderboard[0] || null;
 }
 
 function currentMembership() {

@@ -404,6 +404,11 @@ button {
 .btn,
 .ghost-btn,
 .tiny-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   border: 0;
   border-radius: 999px;
   transition:
@@ -424,6 +429,18 @@ button {
   opacity: 0.55;
   cursor: not-allowed;
   transform: none;
+}
+
+.btn.is-loading::after,
+.ghost-btn.is-loading::after,
+.tiny-btn.is-loading::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: button-spin 0.7s linear infinite;
 }
 
 .btn {
@@ -656,11 +673,23 @@ button {
   color: var(--mint);
 }
 
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .footnote {
   margin-top: 12px;
   color: var(--text-muted);
   font-size: 0.88rem;
   line-height: 1.6;
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1080px) {

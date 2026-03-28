@@ -462,6 +462,37 @@ begin
 end;
 $$;
 
+create or replace function public.end_league(p_league_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  if p_league_id is null then
+    raise exception 'League not found.';
+  end if;
+
+  if not public.is_league_admin(p_league_id) then
+    raise exception 'Only the league creator can end this league.';
+  end if;
+
+  update public.leagues
+  set status = 'archived'
+  where id = p_league_id;
+
+  if not found then
+    raise exception 'League not found.';
+  end if;
+
+  return p_league_id;
+end;
+$$;
+
 create or replace function public.create_match(
   p_league_id uuid,
   p_title text,
@@ -585,6 +616,7 @@ declare
   v_now timestamptz := timezone('utc', now());
   v_match public.matches%rowtype;
   v_member public.league_members%rowtype;
+  v_league_status text;
   v_is_admin boolean := false;
   v_prediction public.predictions%rowtype;
   v_prediction_id uuid;
@@ -618,6 +650,15 @@ begin
 
   if v_member.id is null then
     raise exception 'You are not part of this league.';
+  end if;
+
+  select status
+  into v_league_status
+  from public.leagues
+  where id = v_match.league_id;
+
+  if coalesce(v_league_status, 'active') <> 'active' then
+    raise exception 'This league has already ended.';
   end if;
 
   v_is_admin := v_member.role = 'admin';
@@ -949,6 +990,7 @@ grant select on public.league_leaderboard to authenticated;
 grant execute on function public.sync_member_display_name(text) to authenticated;
 grant execute on function public.create_league(text, text) to authenticated;
 grant execute on function public.join_league(text) to authenticated;
+grant execute on function public.end_league(uuid) to authenticated;
 grant execute on function public.create_match(uuid, text, text, text, timestamptz, timestamptz, timestamptz, timestamptz, text, text) to authenticated;
 grant execute on function public.save_match_timeline(uuid, text, timestamptz, timestamptz, timestamptz, timestamptz, timestamptz) to authenticated;
 grant execute on function public.submit_prediction(uuid, text, text, text, integer) to authenticated;
