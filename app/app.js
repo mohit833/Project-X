@@ -1024,14 +1024,13 @@ function renderSetupPanel() {
 
 function renderAccountPanel() {
   const isAuthenticated = Boolean(state.user);
-  const pendingPhone = state.pendingPhoneAuth?.phone || "";
 
   return `
     <section class="panel" id="account">
       <div class="section-head">
         <div>
           <h3>${isAuthenticated ? "Your account" : "Sign in"}</h3>
-          <p>${isAuthenticated ? "Update the name your friends will see on the board." : "Phone OTP keeps the league simple. Once this device is verified, it stays signed in automatically."}</p>
+          <p>${isAuthenticated ? "Update the name your friends will see on the board." : "Google sign-in is now the fastest path. Once you sign in on this browser, your leagues stay with you automatically."}</p>
         </div>
       </div>
       ${
@@ -1060,47 +1059,15 @@ function renderAccountPanel() {
               </form>
             `
             : `
-              ${
-                pendingPhone
-                  ? `
-                    <form class="form-grid" id="phone-otp-form">
-                      <div class="field">
-                        <label>Phone number</label>
-                        <input value="${escapeAttribute(maskPhoneNumber(pendingPhone))}" disabled />
-                      </div>
-                      <div class="field">
-                        <label for="auth-otp">OTP</label>
-                        <input id="auth-otp" name="otp" inputmode="numeric" maxlength="6" placeholder="123456" required />
-                      </div>
-                      <div class="field span-2">
-                        <small>Enter the SMS code for ${escapeHtml(maskPhoneNumber(pendingPhone))}. If the same browser already has a saved session, the app will keep you signed in next time.</small>
-                      </div>
-                      <div class="field span-2 auth-actions">
-                        <button class="btn" type="submit">Verify OTP</button>
-                        <button class="ghost-btn" type="button" data-action="resend-phone-otp">Resend OTP</button>
-                        <button class="ghost-btn" type="button" data-action="reset-phone-auth">Change phone number</button>
-                      </div>
-                    </form>
-                  `
-                  : `
-                    <form class="form-grid" id="phone-auth-form">
-                      <div class="field">
-                        <label for="auth-phone">Phone number</label>
-                        <input id="auth-phone" name="phone" inputmode="tel" placeholder="+91 9876543210" required />
-                      </div>
-                      <div class="field">
-                        <label for="auth-display-name">Display name</label>
-                        <input id="auth-display-name" name="display_name" maxlength="40" placeholder="Only needed the first time" />
-                      </div>
-                      <div class="field span-2">
-                        <small>Use your phone number once, verify the OTP, and this device will remember your league access until you sign out.</small>
-                      </div>
-                      <div class="field span-2">
-                        <button class="btn" type="submit">Send OTP</button>
-                      </div>
-                    </form>
-                  `
-              }
+              <div class="form-grid auth-launch-panel">
+                <div class="field span-2">
+                  <label>Welcome back</label>
+                  <p class="subtle">Use the Google account you want attached to your leagues. You only need the invite code once per league, and the app will remember that membership after login.</p>
+                </div>
+                <div class="field span-2 auth-actions">
+                  <button class="btn" type="button" data-action="sign-in-google">Continue with Google</button>
+                </div>
+              </div>
             `
       }
     </section>
@@ -1973,16 +1940,6 @@ async function handleSubmit(event) {
   event.preventDefault();
 
   try {
-    if (form.id === "phone-auth-form") {
-      await requestPhoneOtp(form);
-      return;
-    }
-
-    if (form.id === "phone-otp-form") {
-      await verifyPhoneOtp(form);
-      return;
-    }
-
     if (form.id === "profile-form") {
       await saveProfile(form);
       return;
@@ -2032,79 +1989,26 @@ async function handleSubmit(event) {
   }
 }
 
-async function requestPhoneOtp(form) {
-  const formData = new FormData(form);
-  const phone = normalizePhoneNumber(formData.get("phone"));
-  const displayName = cleanNullableText(formData.get("display_name"), 40);
+async function startGoogleSignIn(button) {
+  await withButtonPending(button, "Redirecting...", async () => {
+    clearPendingPhoneAuthState();
 
-  if (!phone) {
-    throw new Error("Enter a valid phone number, like +91 9876543210.");
-  }
-
-  await withPendingForm(form, "Sending OTP...", async () => {
-    await sendPhoneOtpCode(phone, displayName || "");
-  });
-
-  persistPendingPhoneAuthState(phone, displayName || "");
-  render();
-  flash(`OTP sent to ${maskPhoneNumber(phone)}. Enter the code to continue.`, "success");
-}
-
-async function verifyPhoneOtp(form) {
-  const formData = new FormData(form);
-  const otp = String(formData.get("otp") || "").replace(/\D+/g, "");
-  const pendingPhone = state.pendingPhoneAuth?.phone || "";
-
-  if (!pendingPhone) {
-    throw new Error("Start again with your phone number so we know where to verify the OTP.");
-  }
-
-  if (!/^\d{4,8}$/.test(otp)) {
-    throw new Error("Enter the OTP code from the SMS.");
-  }
-
-  let verifiedSession = null;
-
-  await withPendingForm(form, "Verifying OTP...", async () => {
-    const { data, error } = await state.client.auth.verifyOtp({
-      phone: pendingPhone,
-      token: otp,
-      type: "sms",
+    const redirectTo = new URL(window.location.pathname || "/", window.location.origin).toString();
+    const { error } = await state.client.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo,
+        queryParams: {
+          access_type: "offline",
+          prompt: "select_account",
+        },
+      },
     });
 
     if (error) {
       throw error;
     }
-
-    verifiedSession = data?.session ?? null;
   });
-
-  clearPendingPhoneAuthState();
-  state.session = verifiedSession;
-  state.user = verifiedSession?.user ?? state.user;
-  render();
-  flash("Phone verified. You are signed in on this device.", "success");
-}
-
-async function sendPhoneOtpCode(phone, displayName = "") {
-  window.localStorage.setItem("ipl-pending-display-name", displayName || "");
-
-  const { error } = await state.client.auth.signInWithOtp({
-    phone,
-    options: {
-      channel: "sms",
-      shouldCreateUser: true,
-      data: displayName
-        ? {
-            display_name: displayName,
-          }
-        : {},
-    },
-  });
-
-  if (error) {
-    throw error;
-  }
 }
 
 async function saveProfile(form) {
@@ -2444,22 +2348,8 @@ async function handleClick(event) {
       return;
     }
 
-    if (action === "reset-phone-auth") {
-      clearPendingPhoneAuthState();
-      render();
-      return;
-    }
-
-    if (action === "resend-phone-otp") {
-      const pendingPhone = state.pendingPhoneAuth?.phone || "";
-      if (!pendingPhone) {
-        throw new Error("Add your phone number first.");
-      }
-
-      await withButtonPending(target, "Sending OTP...", async () => {
-        await sendPhoneOtpCode(pendingPhone, state.pendingPhoneAuth?.display_name || "");
-      });
-      flash(`Fresh OTP sent to ${maskPhoneNumber(pendingPhone)}.`, "success");
+    if (action === "sign-in-google") {
+      await startGoogleSignIn(target);
       return;
     }
 
