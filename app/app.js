@@ -1,0 +1,626 @@
+import{APP_CONFIG as e}from"./config.js";const n=document.getElementById("app"),a={appName:e.APP_NAME||"IPL Prediction League",demoMode:!1,client:null,session:null,user:null,profile:null,memberships:[],activeLeagueId:null,matches:[],members:[],predictions:[],leaderboard:[],notice:null,loading:!1,realtimeChannel:null,reloadTimer:null,installPromptEvent:null,isStandalone:window.matchMedia?.("(display-mode: standalone)")?.matches||!0===window.navigator.standalone};async function t(){const e=window.localStorage.getItem("ipl-pending-display-name"),n=f(e||a.user?.user_metadata?.display_name||a.user?.user_metadata?.full_name||a.user?.email?.split("@")[0]||"Player",40),{error:t}=await a.client.from("profiles").upsert({id:a.user.id,display_name:n,email:a.user.email||null},{onConflict:"id"});if(t)throw t;const{data:i,error:s}=await a.client.from("profiles").select("*").eq("id",a.user.id).single();if(s)throw s;a.profile=i,e&&window.localStorage.removeItem("ipl-pending-display-name")}async function i(){const{data:e,error:n}=await a.client.from("league_members").select("id, league_id, display_name, role, is_active, joined_at, leagues(id, name, season, invite_code, status, created_by, created_at)").eq("user_id",a.user.id).eq("is_active",!0).order("joined_at",{ascending:!0});if(n)throw n;if(a.memberships=e||[],!a.memberships.length)return a.activeLeagueId=null,a.matches=[],a.members=[],a.predictions=[],a.leaderboard=[],void r();const t=a.memberships.some(e=>e.league_id===a.activeLeagueId);a.activeLeagueId=t?a.activeLeagueId:a.memberships[0].league_id}async function s(){if(!a.activeLeagueId)return void o();const e=a.activeLeagueId,[n,t,i,s]=await Promise.all([a.client.from("matches").select("*, match_results(*)").eq("league_id",e).order("starts_at",{ascending:!0}),a.client.from("league_members").select("id, league_id, user_id, display_name, role, is_active, joined_at").eq("league_id",e).eq("is_active",!0).order("joined_at",{ascending:!0}),a.client.from("predictions").select("id, league_id, match_id, user_id, batsman_name, bowler_name, team_pick, predicted_score, core_locked_due_to_pre_xi, core_submitted_at, score_submitted_at, created_at, updated_at, league_members(display_name)").eq("league_id",e).order("created_at",{ascending:!0}),a.client.from("league_leaderboard").select("*").eq("league_id",e).order("total_points",{ascending:!1}).order("display_name",{ascending:!0})]);if(n.error)throw n.error;if(t.error)throw t.error;if(i.error)throw i.error;if(s.error)throw s.error;if(a.matches=n.data||[],a.members=t.data||[],a.predictions=i.data||[],a.leaderboard=s.data||[],!a.matches.length)return r(),void o();if(!d()){const e=a.matches.find(e=>"live"===p(e));a.selectedMatchId=e?.id||a.matches[0].id}!function(e){if(!a.client)return;const n=`league-${e}`;a.realtimeChannel?.topic!==n&&(r(),a.realtimeChannel=a.client.channel(n).on("postgres_changes",{event:"*",schema:"public",table:"matches",filter:`league_id=eq.${e}`},()=>l()).on("postgres_changes",{event:"*",schema:"public",table:"predictions",filter:`league_id=eq.${e}`},()=>l()).on("postgres_changes",{event:"*",schema:"public",table:"league_members",filter:`league_id=eq.${e}`},()=>l()).on("postgres_changes",{event:"*",schema:"public",table:"match_results"},()=>l()).subscribe())}(e)}function r(){a.reloadTimer&&(window.clearTimeout(a.reloadTimer),a.reloadTimer=null),a.realtimeChannel&&a.client&&a.client.removeChannel(a.realtimeChannel),a.realtimeChannel=null}function l(){a.client&&a.activeLeagueId&&(a.reloadTimer&&window.clearTimeout(a.reloadTimer),a.reloadTimer=window.setTimeout(async()=>{try{await s(),o()}catch(e){console.error(e),b(e.message||"Live refresh failed.","error")}},600))}function o(){n.innerHTML=`
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">🏏</div>
+          <div class="brand-copy">
+            <h1>${$(a.appName)}</h1>
+            <p>Realtime picks, locks, and leaderboard</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          ${a.user?`
+                <span class="chip"><strong>${$(a.profile?.display_name||a.user.email||"Player")}</strong>${$(a.user.email||"")}</span>
+                <button class="ghost-btn" data-action="sign-out">Sign out</button>
+              `:'<a class="ghost-btn" href="#account">Join your league</a>'}
+          ${a.installPromptEvent&&!a.isStandalone?'<button class="ghost-btn" type="button" data-action="install-app">Install app</button>':""}
+          <a class="btn" href="#dashboard">Open dashboard</a>
+        </div>
+      </header>
+
+      <main class="layout">
+        ${a.notice?`
+    <div class="notice notice-${$(a.notice.tone||"info")}">
+      ${$(a.notice.message)}
+    </div>
+  `:""}
+        
+    <section class="hero">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">Tournament game night, but properly organized</div>
+          <h2>Run your IPL prediction league on one public link.</h2>
+          <p>
+            Friends pick one batsman, one bowler, one winning team, and one exact first-innings total.
+            The app locks duplicate picks, respects timing windows, and keeps the full leaderboard in one place.
+          </p>
+          <div class="hero-actions">
+            <a class="btn" href="#dashboard">Start the league</a>
+            <a class="ghost-btn" href="#setup">Deployment steps</a>
+            ${a.installPromptEvent&&!a.isStandalone?'<button class="ghost-btn" type="button" data-action="install-app">Add to home screen</button>':""}
+          </div>
+        </div>
+        <div class="hero-meta">
+          <div class="glass-card">
+            <div class="section-head">
+              <div>
+                <h3>How scoring works</h3>
+                <p>Same rules you shared, now tracked without WhatsApp chaos.</p>
+              </div>
+            </div>
+            <div class="score-strip">
+              <div class="score-pill"><span>Batsman</span><strong>Runs = points</strong></div>
+              <div class="score-pill"><span>Bowler</span><strong>20 per wicket</strong></div>
+              <div class="score-pill"><span>Exact total</span><strong>+10</strong></div>
+              <div class="score-pill"><span>Match winner</span><strong>+50</strong></div>
+            </div>
+          </div>
+          <div class="glass-card">
+            <div class="section-head">
+              <div>
+                <h3>Built for edge cases</h3>
+                <p>Admin lock times keep the game fair when TV and streaming are out of sync.</p>
+              </div>
+            </div>
+            <div class="chip-list">
+              <span class="chip"><strong>No duplicates</strong>First come, first serve</span>
+              <span class="chip"><strong>Pre-XI picks lock</strong>No edits after early core picks</span>
+              <span class="chip"><strong>Server timestamps</strong>No phone clock cheating</span>
+              <span class="chip"><strong>Free hosting</strong>Vercel + Supabase</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  
+        
+    <section class="panel" id="setup">
+      <div class="section-head">
+        <div>
+          <h3>Hosting and setup</h3>
+          <p>This version is designed to stay free for a small private friends league.</p>
+        </div>
+      </div>
+        <div class="setup-grid">
+        <div class="setup-step">
+          <strong>1. Create Supabase</strong>
+          <p class="subtle">Create a free project and run the SQL in <code>supabase/schema.sql</code>.</p>
+        </div>
+        <div class="setup-step">
+          <strong>2. Add keys</strong>
+          <p class="subtle">Copy your project URL and anon key into <code>app/config.js</code>.</p>
+        </div>
+        <div class="setup-step">
+          <strong>3. Deploy static app</strong>
+          <p class="subtle">Drag this folder to Vercel or connect it to GitHub for a free hosted link.</p>
+        </div>
+        <div class="setup-step">
+          <strong>4. Share invite code</strong>
+          <p class="subtle">League admin creates one league, then friends join from the shared invite code.</p>
+        </div>
+      </div>
+      <p class="footnote">
+        Supabase is configured. You can sign in below and start creating your league.
+      </p>
+      <p class="footnote">
+        Once hosted, friends can open the link on mobile and use the install prompt to add it to their home screen.
+      </p>
+    </section>
+  
+        ${function(){const e=Boolean(a.user);return`
+    <section class="panel" id="account">
+      <div class="section-head">
+        <div>
+          <h3>${e?"Your account":"Sign in"}</h3>
+          <p>${e?"Update the name your friends will see on the board.":"Magic link login keeps this simple for the whole group."}</p>
+        </div>
+      </div>
+      ${e?`
+              <form class="form-grid" id="profile-form">
+                <div class="field">
+                  <label for="profile-display-name">Display name</label>
+                  <input id="profile-display-name" name="display_name" maxlength="40" value="${k(a.profile?.display_name||"")}" required />
+                </div>
+                <div class="field">
+                  <label>Email</label>
+                  <input value="${k(a.user.email||"")}" disabled />
+                </div>
+                <div class="field span-2">
+                  <button class="btn" type="submit">Save display name</button>
+                </div>
+              </form>
+            `:'
+              <form class="form-grid" id="magic-link-form">
+                <div class="field">
+                  <label for="auth-display-name">Display name</label>
+                  <input id="auth-display-name" name="display_name" maxlength="40" placeholder="Mohit" required />
+                </div>
+                <div class="field">
+                  <label for="auth-email">Email</label>
+                  <input id="auth-email" type="email" name="email" placeholder="you@example.com" required />
+                </div>
+                <div class="field span-2">
+                  <button class="btn" type="submit">Send magic link</button>
+                </div>
+              </form>
+            '}
+    </section>
+  `}()}
+        ${a.user?`
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>${a.memberships.length?"Your leagues":"Create or join a league"}</h3>
+          <p>${a.memberships.length?"Switch leagues here, or create and join another one.":"One person creates the tournament. Everyone else joins with the invite code."}</p>
+        </div>
+      </div>
+      ${a.memberships.length?`
+            <div class="chip-list">
+              ${a.memberships.map(e=>`
+                    <button class="${e.league_id===a.activeLeagueId?"btn":"ghost-btn"}" type="button" data-action="switch-league" data-league-id="${e.league_id}">
+                      ${$(e.leagues.name)} · ${$(e.role)}
+                    </button>
+                  `).join("")}
+            </div>
+          `:""}
+      <div class="grid-2">
+        <form class="panel" id="create-league-form">
+          <div class="section-head">
+            <div>
+              <h4>Create league</h4>
+              <p>You become admin for this league.</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="league-name">League name</label>
+              <input id="league-name" name="name" placeholder="Mohit IPL League" required />
+            </div>
+            <div class="field">
+              <label for="league-season">Season</label>
+              <input id="league-season" name="season" value="IPL 2026" required />
+            </div>
+            <div class="field span-2">
+              <button class="btn" type="submit">Create league</button>
+            </div>
+          </div>
+        </form>
+
+        <form class="panel" id="join-league-form">
+          <div class="section-head">
+            <div>
+              <h4>Join league</h4>
+              <p>Paste the invite code from the league admin.</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="invite-code">Invite code</label>
+              <input id="invite-code" name="invite_code" placeholder="PLAYIPL" maxlength="12" required />
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn" type="submit">Join now</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </section>
+  `:""}
+        ${function(){if(!a.activeLeagueId)return'
+      <section class="panel" id="dashboard">
+        <div class="empty-state">
+          Sign in and create or join a league to open the dashboard.
+        </div>
+      </section>
+    ';const e=a.memberships.find(e=>e.league_id===a.activeLeagueId)?.leagues,n=d(),t=(s=n?.id,s&&a.user&&a.predictions.find(e=>e.match_id===s&&e.user_id===a.user.id)||null),i="admin"===a.memberships.find(e=>e.league_id===a.activeLeagueId)?.role;var s;return`
+    <section class="stack" id="dashboard">
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h3>${$(e?.name||"League dashboard")}</h3>
+            <p>${$(e?.season||"")} · Invite code <strong>${$(e?.invite_code||"-")}</strong></p>
+          </div>
+          <div class="split-line">
+            <span class="tag ${i?"tag-admin":"tag-member"}">${i?"Admin":"Member"}</span>
+            <button class="ghost-btn" type="button" data-action="refresh-league">Refresh</button>
+          </div>
+        </div>
+        <div class="metric-grid">
+          <div class="stat-card">
+            <span>Members</span>
+            <strong>${a.members.length}</strong>
+          </div>
+          <div class="stat-card">
+            <span>Matches</span>
+            <strong>${a.matches.length}</strong>
+          </div>
+          <div class="stat-card">
+            <span>Your points</span>
+            <strong>${function(){const e=a.leaderboard.find(e=>e.user_id===a.user?.id);return e?.total_points??0}()}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid-3">
+        <div class="panel">
+          <div class="section-head">
+            <div>
+              <h3>Matches</h3>
+              <p>Pick the match everyone is currently playing.</p>
+            </div>
+          </div>
+          ${a.matches.length?`<div class="match-list">${a.matches.map(e=>function(e){const n=p(e),a=e.id===d()?.id,t=c(e.id);return`
+    <button class="match-card ${a?"active":""}" type="button" data-action="select-match" data-match-id="${e.id}">
+      <div class="inline-meta">
+        <span class="tag tag-${n}">${m(n)}</span>
+        <span class="subtle">${$(_(e.starts_at))}</span>
+      </div>
+      <h4>${$(e.title||`${e.team_a} vs ${e.team_b}`)}</h4>
+      <div class="match-meta">
+        <span>${$(e.team_a)}</span>
+        <span>vs</span>
+        <span>${$(e.team_b)}</span>
+      </div>
+      <p class="subtle">${$(e.venue||"Venue TBD")}</p>
+      <div class="chip-list">
+        <span class="chip"><strong>${t.length}</strong>Picks posted</span>
+        <span class="chip"><strong>${e.match_results?"Scored":"Pending"}</strong>Result status</span>
+      </div>
+    </button>
+  `}(e)).join("")}</div>`:`<div class="empty-state">No matches yet. ${i?"Create the first match below.":"Ask your admin to add one."}</div>`}
+        </div>
+
+        <div class="stack">
+          ${n?`
+                ${function(e,n,t){const i=p(e),s=c(e.id),r=function(e,n){return!!n?.core_locked_due_to_pre_xi||!!e?.picks_deadline_at&&Date.now()>new Date(e.picks_deadline_at).getTime()}(e,n),l=function(e){return!!e?.score_deadline_at&&Date.now()>new Date(e.score_deadline_at).getTime()}(e),o=r&&l,d=e.match_results;return`
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>${$(e.title||`${e.team_a} vs ${e.team_b}`)}</h3>
+          <p>${$(e.venue||"Venue TBD")} · ${$(_(e.starts_at))}</p>
+        </div>
+        <span class="tag tag-${i}">${m(i)}</span>
+      </div>
+
+      <div class="chip-list">
+        <span class="chip"><strong>XI announced</strong>${$(_(e.playing_xi_announced_at)||"Not set")}</span>
+        <span class="chip"><strong>Core picks lock</strong>${$(_(e.picks_deadline_at)||"Not set")}</span>
+        <span class="chip"><strong>Score lock</strong>${$(_(e.score_deadline_at)||"Not set")}</span>
+        <span class="chip"><strong>Invite fairness</strong>Server timestamps decide all ties</span>
+      </div>
+
+      ${e.notes?`<p class="footnote">${$(e.notes)}</p>`:""}
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="section-head">
+            <div>
+              <h4>Your prediction</h4>
+              <p>${r?"Core picks are locked for this match.":"Post or update your picks inside the open window."}</p>
+            </div>
+          </div>
+          ${a.user?`
+                  <form class="form-grid" id="prediction-form">
+                    <input type="hidden" name="match_id" value="${e.id}" />
+                    <div class="field">
+                      <label for="batsman-name">Batsman</label>
+                      <input id="batsman-name" name="batsman_name" placeholder="Virat Kohli" value="${k(n?.batsman_name||"")}" ${r?"disabled":""} />
+                    </div>
+                    <div class="field">
+                      <label for="bowler-name">Bowler</label>
+                      <input id="bowler-name" name="bowler_name" placeholder="Jasprit Bumrah" value="${k(n?.bowler_name||"")}" ${r?"disabled":""} />
+                    </div>
+                    <div class="field">
+                      <label for="team-pick">Winning team</label>
+                      <select id="team-pick" name="team_pick" ${r?"disabled":""}>
+                        <option value="">Choose a winner</option>
+                        <option value="${k(e.team_a)}" ${n?.team_pick===e.team_a?"selected":""}>${$(e.team_a)}</option>
+                        <option value="${k(e.team_b)}" ${n?.team_pick===e.team_b?"selected":""}>${$(e.team_b)}</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="predicted-score">1st innings total</label>
+                      <input id="predicted-score" type="number" name="predicted_score" min="0" placeholder="182" value="${k(n?.predicted_score??"")}" ${l?"disabled":""} />
+                    </div>
+                    <div class="field span-2">
+                      <small>
+                        Enter batsman, bowler, and team together. Exact score can be added later until the score lock.
+                        If your core picks were submitted before the playing XI announcement, they become permanently locked.
+                      </small>
+                    </div>
+                    <div class="field span-2">
+                      <button class="btn" type="submit" ${o?"disabled":""}>${o?"Prediction locked":"Save prediction"}</button>
+                    </div>
+                  </form>
+                `:'<div class="empty-state">Sign in to submit picks.</div>'}
+          ${n?`
+                <div class="prediction-snapshot">
+                  <div class="entry-item">
+                    <div>
+                      <strong>${$(n.batsman_name||"Batsman not set")}</strong>
+                      <span class="subtle">Batsman</span>
+                    </div>
+                    <div class="entry-stats">
+                      <strong>${$(n.team_pick||"Winner not set")}</strong>
+                      <span class="subtle">Team pick</span>
+                    </div>
+                  </div>
+                  <div class="entry-item">
+                    <div>
+                      <strong>${$(n.bowler_name||"Bowler not set")}</strong>
+                      <span class="subtle">Bowler</span>
+                    </div>
+                    <div class="entry-stats">
+                      <strong>${$(null!==n.predicted_score&&void 0!==n.predicted_score?n.predicted_score:"Score not set")}</strong>
+                      <span class="subtle">Predicted total</span>
+                    </div>
+                  </div>
+                  <div class="chip-list">
+                    ${n.core_locked_due_to_pre_xi?'<span class="chip"><strong>Locked</strong>Submitted before XI</span>':""}
+                    ${n.core_submitted_at?`<span class="chip"><strong>Core saved</strong>${$(_(n.core_submitted_at))}</span>`:""}
+                    ${n.score_submitted_at?`<span class="chip"><strong>Score saved</strong>${$(_(n.score_submitted_at))}</span>`:""}
+                  </div>
+                </div>
+              `:""}
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <div>
+              <h4>Taken picks</h4>
+              <p>These values are already locked by other players for this match.</p>
+            </div>
+          </div>
+          ${s.length?`
+                <div class="entry-list">
+                  ${s.map(e=>function(e){const n=e.user_id===a.user?.id;return`
+    <div class="entry-item">
+      <div>
+        <strong>${$(e.league_members?.display_name||"Player")}</strong>
+        <div class="entry-meta">
+          <span class="subtle">Batsman: ${$(e.batsman_name||"-")}</span>
+          <span class="subtle">Bowler: ${$(e.bowler_name||"-")}</span>
+        </div>
+      </div>
+      <div class="entry-stats">
+        <strong>${$(e.predicted_score??"-")}</strong>
+        <div class="entry-meta">
+          <span class="subtle">${$(e.team_pick||"-")}</span>
+          ${n?'<span class="tag tag-member">You</span>':""}
+        </div>
+      </div>
+    </div>
+  `}(e)).join("")}
+                </div>
+              `:'<div class="empty-state">No one has posted yet.</div>'}
+        </div>
+      </div>
+
+      ${d?`
+            <div class="panel">
+              <div class="section-head">
+                <div>
+                  <h4>Scored result</h4>
+                  <p>Points have been calculated for this match.</p>
+                </div>
+              </div>
+              <div class="chip-list">
+                <span class="chip"><strong>Winner</strong>${$(d.winner_team)}</span>
+                <span class="chip"><strong>1st innings total</strong>${$(d.first_innings_total)}</span>
+                <span class="chip"><strong>Tracked batsmen</strong>${Object.keys(d.batsman_runs||{}).length}</span>
+                <span class="chip"><strong>Tracked bowlers</strong>${Object.keys(d.bowler_wickets||{}).length}</span>
+              </div>
+              ${d.notes?`<p class="footnote">${$(d.notes)}</p>`:""}
+            </div>
+          `:t?"":'<div class="notice notice-info">Admin will enter results here once the match is complete.</div>'}
+    </section>
+  `}(n,t,i)}
+              `:`<section class="panel"><div class="empty-state">${i?"No matches yet. Create the first one below.":"Choose a match to start."}</div></section>`}
+          ${i?function(e){return`
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>Admin tools</h3>
+          <p>Use these forms to add matches, lock windows, and settle points.</p>
+        </div>
+      </div>
+      <div class="stack">
+        <form class="admin-card" id="create-match-form">
+          <div class="section-head">
+            <div>
+              <h4>Create match</h4>
+              <p>Add upcoming fixtures for your league.</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="create-team-a">Team A</label>
+              <input id="create-team-a" name="team_a" placeholder="Chennai Super Kings" required />
+            </div>
+            <div class="field">
+              <label for="create-team-b">Team B</label>
+              <input id="create-team-b" name="team_b" placeholder="Mumbai Indians" required />
+            </div>
+            <div class="field">
+              <label for="create-title">Title</label>
+              <input id="create-title" name="title" placeholder="CSK vs MI" />
+            </div>
+            <div class="field">
+              <label for="create-venue">Venue</label>
+              <input id="create-venue" name="venue" placeholder="Chepauk" />
+            </div>
+            <div class="field">
+              <label for="create-starts-at">Match starts at</label>
+              <input id="create-starts-at" type="datetime-local" name="starts_at" required />
+            </div>
+            <div class="field">
+              <label for="create-xi-at">Playing XI announced at</label>
+              <input id="create-xi-at" type="datetime-local" name="playing_xi_announced_at" />
+            </div>
+            <div class="field">
+              <label for="create-picks-at">Core picks lock</label>
+              <input id="create-picks-at" type="datetime-local" name="picks_deadline_at" required />
+            </div>
+            <div class="field">
+              <label for="create-score-at">Score lock</label>
+              <input id="create-score-at" type="datetime-local" name="score_deadline_at" required />
+            </div>
+            <div class="field span-2">
+              <label for="create-notes">Notes</label>
+              <textarea id="create-notes" name="notes" placeholder="Optional reminder about lock rules or rain rules."></textarea>
+            </div>
+            <input type="hidden" name="league_id" value="${e?.league_id||a.activeLeagueId||"")}" />
+            <div class="field span-2">
+              <button class="btn" type="submit">Create match</button>
+            </div>
+          </div>
+        </form>
+        ${e?`
+              <form class="timeline-card" id="timeline-form">
+                <div class="section-head">
+                  <div>
+                    <h4>Edit lock windows</h4>
+                    <p>Set the official source-of-truth timestamps for this match.</p>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <input type="hidden" name="match_id" value="${e.id}" />
+                  <div class="field">
+                    <label for="timeline-status">Status</label>
+                    <select id="timeline-status" name="status">
+                      ${["scheduled","live","locked","completed","cancelled"].map(n=>`
+                            <option value="${n}" ${p(e)===n?"selected":""}>${m(n)}</option>
+                          `).join("")}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="timeline-starts-at">Starts at</label>
+                    <input id="timeline-starts-at" type="datetime-local" name="starts_at" value="${k(g(e.starts_at))}" />
+                  </div>
+                  <div class="field">
+                    <label for="timeline-innings-at">Innings started at</label>
+                    <input id="timeline-innings-at" type="datetime-local" name="innings_started_at" value="${k(g(e.innings_started_at))}" />
+                  </div>
+                  <div class="field">
+                    <label for="timeline-xi-at">Playing XI announced at</label>
+                    <input id="timeline-xi-at" type="datetime-local" name="playing_xi_announced_at" value="${k(g(e.playing_xi_announced_at))}" />
+                  </div>
+                  <div class="field">
+                    <label for="timeline-picks-at">Core picks lock</label>
+                    <input id="timeline-picks-at" type="datetime-local" name="picks_deadline_at" value="${k(g(e.picks_deadline_at))}" required />
+                  </div>
+                  <div class="field">
+                    <label for="timeline-score-at">Score lock</label>
+                    <input id="timeline-score-at" type="datetime-local" name="score_deadline_at" value="${k(g(e.score_deadline_at))}" required />
+                  </div>
+                  <div class="field span-2">
+                    <button class="btn" type="submit">Save match timeline</button>
+                  </div>
+                </div>
+              </form>
+
+              <form class="admin-card" id="result-form">
+                <div class="section-head">
+                  <div>
+                    <h4>Settle result</h4>
+                    <p>Enter normalized scoring data once the match is complete.</p>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <input type="hidden" name="match_id" value="${e.id}" />
+                  <div class="field">
+                    <label for="result-winner">Winner</label>
+                    <select id="result-winner" name="winner_team" required>
+                      <option value="">Choose winner</option>
+                      <option value="${k(e.team_a)}" ${e.match_results?.winner_team===e.team_a?"selected":""}>${$(e.team_a)}</option>
+                      <option value="${k(e.team_b)}" ${e.match_results?.winner_team===e.team_b?"selected":""}>${$(e.team_b)}</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="result-total">1st innings total</label>
+                    <input id="result-total" type="number" min="0" name="first_innings_total" value="${k(e.match_results?.first_innings_total??"")}" required />
+                  </div>
+                  <div class="field span-2">
+                    <label for="result-batsmen">Batsman runs</label>
+                    <textarea id="result-batsmen" name="batsman_runs" placeholder="Virat Kohli: 72&#10;Ajinkya Rahane: 29">${$(v(e.match_results?.batsman_runs))}</textarea>
+                    <small>Use one line per player in the format <code>Name: runs</code>.</small>
+                  </div>
+                  <div class="field span-2">
+                    <label for="result-bowlers">Bowler wickets</label>
+                    <textarea id="result-bowlers" name="bowler_wickets" placeholder="Varun Chakravarthy: 3&#10;Jasprit Bumrah: 2">${$(v(e.match_results?.bowler_wickets))}</textarea>
+                    <small>Use one line per player in the format <code>Name: wickets</code>.</small>
+                  </div>
+                  <div class="field span-2">
+                    <label for="result-notes">Result notes</label>
+                    <textarea id="result-notes" name="notes" placeholder="Optional note for rain, DLS, abandoned games, or disputes.">${$(e.match_results?.notes||"")}</textarea>
+                  </div>
+                  <div class="field span-2">
+                    <button class="btn" type="submit">Save scored result</button>
+                  </div>
+                </div>
+              </form>
+            `:'
+              <div class="empty-state">
+                Create a match first, then the lock-window and scoring forms for that match will appear here.
+              </div>
+            '}
+      </div>
+    </section>
+  `}(n):""}
+        </div>
+
+        <div class="stack">
+          <section class="panel">
+            <div class="section-head">
+              <div>
+                <h3>Leaderboard</h3>
+                <p>Season standings across all completed matches.</p>
+              </div>
+            </div>
+            ${a.leaderboard.length?`<div class="leaderboard-list">${a.leaderboard.map((e,n)=>function(e,n){return`
+    <div class="leaderboard-item ${e.user_id===a.user?.id?"current-user":""}">
+      <div class="split-line">
+        <div class="leaderboard-rank">${n+1}</div>
+        <div>
+          <strong>${$(e.display_name)}</strong>
+          <div class="leaderboard-meta">
+            <span class="subtle">${e.matches_joined||0} matches joined</span>
+            <span class="subtle">${e.role}</span>
+          </div>
+        </div>
+      </div>
+      <div class="leaderboard-points">
+        <strong>${$(e.total_points??0)}</strong>
+        <span class="subtle">points</span>
+      </div>
+    </div>
+  `}(e,n)).join("")}</div>`:'<div class="empty-state">Points appear after the first scored match.</div>'}
+          </section>
+
+          <section class="panel">
+            <div class="section-head">
+              <div>
+                <h3>Players</h3>
+                <p>Everyone active in the league right now.</p>
+              </div>
+            </div>
+            <div class="member-list">
+              ${a.members.map(e=>`
+                    <div class="member-item">
+                      <div>
+                        <strong>${$(e.display_name)}</strong>
+                        <span class="subtle">Joined ${$(_(e.joined_at,"date"))}</span>
+                      </div>
+                      <span class="tag ${"admin"===e.role?"tag-admin":"tag-member"}">${$(e.role)}</span>
+                    </div>
+                  `).join("")}
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
+  `}()}
+      </main>
+    </div>
+  `}function d(){return a.matches.length&&(a.matches.find(e=>e.id===a.selectedMatchId)||a.matches[0])||null}function c(e){return a.predictions.filter(n=>n.match_id===e)}function p(e){if(e.match_results)return"completed";if("cancelled"===e.status)return"cancelled";const n=Date.now(),a=(e.picks_deadline_at&&new Date(e.picks_deadline_at).getTime(),e.score_deadline_at?new Date(e.score_deadline_at).getTime():null),t=e.starts_at?new Date(e.starts_at).getTime():null;return a&&n>a?"locked":t&&n>=t?"live":e.status||"scheduled"}function m(e){return e?e.charAt(0).toUpperCase()+e.slice(1):"Scheduled"}function u(e){const n=e.split("\n").map(e=>e.trim()).filter(Boolean),a={};for(const e of n){const[n,t]=e.split(":"),i=f(n,80),s=Number.parseInt((t||"").trim(),10);if(!i||Number.isNaN(s))throw new Error(`Invalid score line: "${e}". Use "Name: number".`);a[y(i)]=s}return a}function v(e={}){return Object.entries(e).map(([e,n])=>`${e}: ${n}`).join("\n")}function h(e){const n=String(e||"").trim();if(!n)return null;const a=new Date(n);return Number.isNaN(a.getTime())?null:a.toISOString()}function g(e){if(!e)return"";const n=new Date(e);if(Number.isNaN(n.getTime()))return"";const a=n.getTimezoneOffset();return new Date(n.getTime()-6e4*a).toISOString().slice(0,16)}function _(e,n="full"){if(!e)return"";const a=new Date(e);return Number.isNaN(a.getTime())?"":"date"===n?new Intl.DateTimeFormat(void 0,{day:"numeric",month:"short"}).format(a):new Intl.DateTimeFormat(void 0,{dateStyle:"medium",timeStyle:"short"}).format(a)}function b(e,n="info"){a.notice={message:e,tone:n},o(),window.clearTimeout(b.timerId),b.timerId=window.setTimeout(()=>{a.notice=null,o()},4200)}function f(e,n){return String(e||"").replace(/\s+/g," ").trim().slice(0,n)}function w(e,n){return f(e,n)||null}function y(e){return f(e,80).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")}function $(e){return String(e??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}function k(e){return $(e)}document.addEventListener("submit",async function(e){const n=e.target;if(n instanceof HTMLFormElement){e.preventDefault();try{if("magic-link-form"===n.id)return void await async function(e){const n=new FormData(e),t=String(n.get("email")||"").trim().toLowerCase(),i=f(n.get("display_name"),40);if(!t||!i)throw new Error("Please add both your email and display name.");window.localStorage.setItem("ipl-pending-display-name",i);const{error:s}=await a.client.auth.signInWithOtp({email:t,options:{emailRedirectTo:window.location.href,data:{display_name:i}}});if(s)throw s;b(`Magic link sent to ${t}. Open it on this device to sign in.`,"success"),e.reset()}(n);if("profile-form"===n.id)return void await async function(e){const n=f(new FormData(e).get("display_name"),40);if(!n)throw new Error("Display name cannot be empty.");const{error:r}=await a.client.rpc("sync_member_display_name",{p_display_name:n});if(r)throw r;await t(),await i(),await s(),o(),b("Display name updated.","success")}(n);if("create-league-form"===n.id)return void await async function(e){const n=new FormData(e),t=f(n.get("name"),80),r=f(n.get("season"),40);if(!t)throw new Error("League name is required.");const{error:l}=await a.client.rpc("create_league",{p_name:t,p_season:r||"IPL 2026"});if(l)throw l;await i(),await s(),o(),e.reset(),b("League created. Share the invite code with your friends.","success")}(n);if("join-league-form"===n.id)return void await async function(e){const n=new FormData(e),t=String(n.get("invite_code")||"").trim().toUpperCase();if(!t)throw new Error("Invite code is required.");const{error:r}=await a.client.rpc("join_league",{p_invite_code:t});if(r)throw r;await i(),await s(),o(),e.reset(),b(`Joined league with code ${t}.`,"success")}(n);if("prediction-form"===n.id)return void await async function(e){const n=new FormData(e),t=String(n.get("match_id")||""),i=w(n.get("batsman_name"),80),r=w(n.get("bowler_name"),80),l=w(n.get("team_pick"),80),d=String(n.get("predicted_score")||"").trim();if([i,r,l].some(Boolean)&&[i,r,l].some(e=>!e))throw new Error("Submit batsman, bowler, and winning team together.");const c=""===d?null:Number.parseInt(d,10);if(""!==d&&Number.isNaN(c))throw new Error("Score prediction must be a number.");const{error:p}=await a.client.rpc("submit_prediction",{p_match_id:t,p_batsman_name:i,p_bowler_name:r,p_team_pick:l,p_predicted_score:c});if(p)throw p;await s(),o(),b("Prediction saved.","success")}(n);if("create-match-form"===n.id)return void await async function(e){const n=new FormData(e),t=f(n.get("team_a"),80),i=f(n.get("team_b"),80),r=w(n.get("title"),120)||`${t} vs ${i}`,l=w(n.get("venue"),120),d=h(n.get("starts_at")),c=h(n.get("playing_xi_announced_at")),p=h(n.get("picks_deadline_at")),m=h(n.get("score_deadline_at")),u=w(n.get("notes"),600),v=String(n.get("league_id")||a.activeLeagueId||"");if(!(t&&i&&d&&p&&m))throw new Error("Please fill all required match fields.");const{error:g}=await a.client.rpc("create_match",{p_league_id:v,p_title:r,p_team_a:t,p_team_b:i,p_starts_at:d,p_playing_xi_announced_at:c,p_picks_deadline_at:p,p_score_deadline_at:m,p_venue:l,p_notes:u});if(g)throw g;await s(),o(),e.reset(),b("Match created.","success")}(n);if("timeline-form"===n.id)return void await async function(e){const n=new FormData(e),{error:t}=await a.client.rpc("save_match_timeline",{p_match_id:String(n.get("match_id")||""),p_status:w(n.get("status"),20),p_starts_at:h(n.get("starts_at")),p_innings_started_at:h(n.get("innings_started_at")),p_playing_xi_announced_at:h(n.get("playing_xi_announced_at")),p_picks_deadline_at:h(n.get("picks_deadline_at")),p_score_deadline_at:h(n.get("score_deadline_at"))});if(t)throw t;await s(),o(),b("Match timeline updated.","success")}(n);"result-form"===n.id&&await async function(e){const n=new FormData(e),t=f(n.get("winner_team"),80),i=Number.parseInt(String(n.get("first_innings_total")||""),10),r=u(String(n.get("batsman_runs")||"")),l=u(String(n.get("bowler_wickets")||"")),d=w(n.get("notes"),1e3);if(!t||Number.isNaN(i))throw new Error("Winner and first innings total are required.");const{error:c}=await a.client.rpc("save_match_result",{p_match_id:String(n.get("match_id")||""),p_winner_team:t,p_first_innings_total:i,p_batsman_runs:r,p_bowler_wickets:l,p_notes:d});if(c)throw c;await s(),o(),b("Match result saved and points recalculated.","success")}(n)}catch(e){console.error(e),b(e.message||"That action failed.","error")}}}),document.addEventListener("click",async function(e){const n=e.target.closest("[data-action]");if(!n)return;const t=n.getAttribute("data-action");try{if("sign-out"===t)return await a.client.auth.signOut(),void b("Signed out.","success");if("switch-league"===t)return a.activeLeagueId=n.getAttribute("data-league-id"),await s(),void o();if("refresh-league"===t)return await i(),await s(),o(),void b("League refreshed.","success");if("install-app"===t)return void await async function(){if(!a.installPromptEvent)return void b("Install prompt is not available on this device yet.","info");a.installPromptEvent.prompt();const e=await a.installPromptEvent.userChoice;"accepted"===e?.outcome&&b("Installing app...","success"),a.installPromptEvent=null,o()}();"select-match"===t&&(a.selectedMatchId=n.getAttribute("data-match-id"),o())}catch(e){console.error(e),b(e.message||"Action failed.","error")}}),document.addEventListener("change",function(e){const n=e.target;n instanceof HTMLInputElement&&("create-starts-at"!==n.id||document.getElementById("create-picks-at")?.value||(document.getElementById("create-picks-at").value=n.value))}),window.addEventListener("beforeinstallprompt",function(e){e.preventDefault(),a.installPromptEvent=e,o()}),window.addEventListener("appinstalled",function(){a.installPromptEvent=null,a.isStandalone=!0,b("App installed. It should now appear on your home screen.","success")}),"serviceWorker"in navigator&&window.addEventListener("load",()=>{navigator.serviceWorker.register("./service-worker.js").catch(e=>{console.error("Service worker registration failed",e)})}),async function(){o();const{createClient:n}=await import("https://esm.sh/@supabase/supabase-js@2.49.4");a.client=n(e.SUPABASE_URL,e.SUPABASE_ANON_KEY,{auth:{autoRefreshToken:!0,persistSession:!0,detectSessionInUrl:!0}});const{data:{session:l}}=await a.client.auth.getSession();a.session=l,a.user=l?.user??null,a.client.auth.onAuthStateChange(async(e,n)=>{if(a.session=n,a.user=n?.user??null,a.profile=null,r(),!a.user)return a.memberships=[],a.activeLeagueId=null,a.matches=[],a.members=[],a.predictions=[],a.leaderboard=[],void o();try{await t(),await i(),await s(),o()}catch(e){console.error(e),b(e.message||"Unable to refresh your league data.","error")}}),a.user&&(await t(),await i(),await s()),o()}().catch(e=>{console.error(e),b(e.message||"Something went wrong while starting the app.","error")});
