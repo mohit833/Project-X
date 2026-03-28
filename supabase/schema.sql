@@ -593,7 +593,9 @@ declare
   v_batsman text := nullif(trim(coalesce(p_batsman_name, '')), '');
   v_bowler text := nullif(trim(coalesce(p_bowler_name, '')), '');
   v_team_pick text := nullif(trim(coalesce(p_team_pick, '')), '');
+  v_core_window_open boolean := true;
   v_core_locked boolean := false;
+  v_score_window_open boolean := false;
   v_score_locked boolean := false;
 begin
   if v_uid is null then
@@ -643,15 +645,27 @@ begin
     and user_id = v_uid
   for update;
 
+  if v_match.starts_at is not null then
+    v_core_window_open := v_now >= (v_match.starts_at - interval '2 hours');
+  end if;
+
   if v_match.current_innings_ball is not null then
     v_core_locked := v_match.current_innings_ball >= 19;
+    v_score_window_open := v_match.current_innings_ball >= 19 and v_match.current_innings_ball < 43;
     v_score_locked := v_match.current_innings_ball >= 43;
   else
     v_core_locked := v_match.picks_deadline_at is not null and v_now > v_match.picks_deadline_at;
+    v_score_window_open := v_match.picks_deadline_at is not null
+      and v_now >= v_match.picks_deadline_at
+      and not (v_match.score_deadline_at is not null and v_now > v_match.score_deadline_at);
     v_score_locked := v_match.score_deadline_at is not null and v_now > v_match.score_deadline_at;
   end if;
 
   if v_wants_core then
+    if not v_core_window_open then
+      raise exception 'Core picks open only in the 2 hours before the match starts.';
+    end if;
+
     if v_core_locked then
       raise exception 'Core picks are locked after the 3.1 over cutoff.';
     end if;
@@ -686,9 +700,13 @@ begin
       raise exception 'Predicted score must be zero or higher.';
     end if;
 
-    if v_score_locked
+    if (not v_score_window_open or v_score_locked)
       and (v_prediction.id is null or v_prediction.predicted_score is distinct from p_predicted_score) then
-      raise exception 'Score prediction is locked after the 7.1 over cutoff.';
+      if v_score_locked then
+        raise exception 'Score prediction is locked after the 7.1 over cutoff.';
+      end if;
+
+      raise exception 'Score prediction opens after the 3.1 over cutoff.';
     end if;
 
     if exists (
