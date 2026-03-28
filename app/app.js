@@ -3016,7 +3016,7 @@ async function syncMatchFromProvider(
   markMatchSyncing(match.id, true, background);
 
   try {
-    const latestSnapshot = await fetchProviderMatchSnapshot(match.external_match_id);
+    const latestSnapshot = await fetchProviderMatchSnapshot(match.external_match_id, match);
     const enrichedSnapshot = await enrichFixtureWithPlayingXi(latestSnapshot, match);
     await upsertSyncedMatchRow(match, enrichedSnapshot);
 
@@ -3030,7 +3030,11 @@ async function syncMatchFromProvider(
     }
 
     if (flashSuccess) {
-      flash("Live match data synced.", "success");
+      if (enrichedSnapshot?.live_feed_pending) {
+        flash("Official live files are not published yet. Schedule and squads stay ready.", "info");
+      } else {
+        flash("Live match data synced.", "success");
+      }
     }
   } catch (error) {
     await saveMatchSyncError(match.id, error);
@@ -3350,7 +3354,9 @@ async function fetchJsonpPayload(url) {
   });
 
   if (!response.ok) {
-    throw new Error(`Official IPL feed returned ${response.status}.`);
+    const error = new Error(`Official IPL feed returned ${response.status}.`);
+    error.status = response.status;
+    throw error;
   }
 
   const text = await response.text();
@@ -3389,7 +3395,19 @@ async function fetchOfficialFeedJson(kind, params = {}) {
     });
 
     if (!response.ok) {
-      throw new Error(`Official IPL proxy returned ${response.status}.`);
+      let message = `Official IPL proxy returned ${response.status}.`;
+      try {
+        const payload = await response.json();
+        if (payload?.error) {
+          message = payload.error;
+        }
+      } catch (_error) {
+        // Ignore invalid proxy error payloads and keep the generic message.
+      }
+
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
     }
 
     return response.json();
@@ -3511,8 +3529,16 @@ function mergeOfficialFixturesWithProviderData(officialFixtures, providerFixture
   });
 }
 
-async function fetchProviderMatchSnapshot(externalMatchId) {
-  return normalizeOfficialLiveSnapshot(await fetchOfficialMatchBundle(externalMatchId));
+async function fetchProviderMatchSnapshot(externalMatchId, fallbackMatch = null) {
+  try {
+    return normalizeOfficialLiveSnapshot(await fetchOfficialMatchBundle(externalMatchId));
+  } catch (error) {
+    if (shouldUseOfficialScheduledFallback(error, fallbackMatch)) {
+      return buildOfficialScheduledSnapshot(fallbackMatch, externalMatchId);
+    }
+
+    throw error;
+  }
 }
 
 async function fetchPlayingXiSnapshot(externalMatchId, fixture) {
@@ -3522,6 +3548,44 @@ async function fetchPlayingXiSnapshot(externalMatchId, fixture) {
 
 async function fetchMatchScorecard(externalMatchId) {
   return fetchOfficialMatchBundle(externalMatchId);
+}
+
+function shouldUseOfficialScheduledFallback(error, fallbackMatch) {
+  const status = toOptionalInteger(error?.status);
+  const message = cleanText(error?.message || "", 200).toLowerCase();
+  const isMissingOfficialLiveFile =
+    status === 404 || /\b404\b/.test(message) || message.includes("not found");
+
+  if (!isMissingOfficialLiveFile) {
+    return false;
+  }
+
+  const startsAt = fallbackMatch?.starts_at ? new Date(fallbackMatch.starts_at).getTime() : null;
+  if (!startsAt || Number.isNaN(startsAt)) {
+    return false;
+  }
+
+  return Date.now() < startsAt;
+}
+
+function buildOfficialScheduledSnapshot(match, externalMatchId) {
+  return {
+    external_match_id: cleanNullableText(externalMatchId || match?.external_match_id, 40),
+    title: cleanText(match?.title || `${match?.team_a || ""} vs ${match?.team_b || ""}`, 120),
+    team_a: cleanNullableText(match?.team_a, 80),
+    team_b: cleanNullableText(match?.team_b, 80),
+    venue: cleanNullableText(match?.venue, 120),
+    starts_at: match?.starts_at || null,
+    series_name: cleanNullableText(match?.series_name, 120) || "Indian Premier League",
+    status: "scheduled",
+    current_innings_ball: null,
+    current_over_display: null,
+    playing_xi: match?.playing_xi || buildEmptyPlayingXi(),
+    provider: "ipl-official",
+    raw: null,
+    official_scorecard_bundle: null,
+    live_feed_pending: true,
+  };
 }
 
 async function fetchCricketApi(endpoint, params = {}) {
