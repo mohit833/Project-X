@@ -325,7 +325,7 @@ async function init() {
   state.session = session;
   state.user = session?.user ?? null;
 
-  state.client.auth.onAuthStateChange(async (_event, sessionData) => {
+  state.client.auth.onAuthStateChange((_event, sessionData) => {
     state.session = sessionData;
     state.user = sessionData?.user ?? null;
     state.profile = null;
@@ -344,21 +344,30 @@ async function init() {
       return;
     }
 
+    render();
+    window.setTimeout(async () => {
+      try {
+        await ensureProfile();
+        await loadMemberships();
+        await loadLeagueBundle();
+        render();
+      } catch (error) {
+        console.error(error);
+        flash(error.message || "Unable to refresh your league data.", "error");
+      }
+    }, 0);
+  });
+
+  if (state.user) {
+    render();
     try {
       await ensureProfile();
       await loadMemberships();
       await loadLeagueBundle();
-      render();
     } catch (error) {
       console.error(error);
-      flash(error.message || "Unable to refresh your league data.", "error");
+      flash(error.message || "Signed in, but we could not finish loading your league data.", "error");
     }
-  });
-
-  if (state.user) {
-    await ensureProfile();
-    await loadMemberships();
-    await loadLeagueBundle();
   }
 
   render();
