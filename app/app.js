@@ -2931,6 +2931,39 @@ async function fetchOfficialIplCompetition(targetYear) {
 }
 
 async function fetchJsonpPayload(url) {
+  if (shouldUseServerProxy()) {
+    const requestedUrl = new URL(url);
+    const proxyUrl = new URL("/api/official-ipl", window.location.origin);
+
+    if (requestedUrl.pathname.endsWith("/competition.js")) {
+      proxyUrl.searchParams.set("kind", "competition");
+    } else {
+      const competitionMatch = requestedUrl.pathname.match(/\/(\d+)-matchschedule\.js$/i);
+      if (!competitionMatch) {
+        throw new Error("Unsupported official IPL feed path.");
+      }
+
+      proxyUrl.searchParams.set("kind", "schedule");
+      proxyUrl.searchParams.set("competitionId", competitionMatch[1]);
+      proxyUrl.searchParams.set(
+        "feedBaseUrl",
+        requestedUrl.toString().replace(/\/[^/]+$/, ""),
+      );
+    }
+
+    const response = await fetch(proxyUrl.toString(), {
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Official IPL proxy returned ${response.status}.`);
+    }
+
+    return response.json();
+  }
+
   const response = await fetch(url, {
     headers: {
       Accept: "application/javascript, text/javascript, */*;q=0.1",
@@ -3014,6 +3047,40 @@ async function fetchMatchScorecard(externalMatchId) {
 }
 
 async function fetchCricketApi(endpoint, params = {}) {
+  if (shouldUseServerProxy()) {
+    const proxyUrl = new URL("/api/cricket", window.location.origin);
+    proxyUrl.searchParams.set("endpoint", endpoint.replace(/^\//, ""));
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value === null || value === undefined || value === "") {
+        continue;
+      }
+
+      proxyUrl.searchParams.set(key, String(value));
+    }
+
+    const response = await fetch(proxyUrl.toString(), {
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Cricket proxy returned ${response.status}.`);
+    }
+
+    const json = await response.json();
+    if (json?.status === "failure" || json?.status === "error") {
+      throw new Error(json?.reason || json?.message || "Cricket API request failed.");
+    }
+
+    if (json?.error) {
+      throw new Error(json.error);
+    }
+
+    return json;
+  }
+
   const baseUrl = String(APP_CONFIG.CRICKET_API_BASE_URL || "https://api.cricapi.com/v1").replace(
     /\/$/,
     "",
@@ -3049,6 +3116,10 @@ async function fetchCricketApi(endpoint, params = {}) {
   }
 
   return json;
+}
+
+function shouldUseServerProxy() {
+  return typeof window !== "undefined" && !["localhost", "127.0.0.1"].includes(window.location.hostname);
 }
 
 function normalizeProviderMatch(rawMatch) {
