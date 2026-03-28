@@ -129,13 +129,11 @@ create table if not exists public.predictions (
   )
 );
 
-create unique index if not exists predictions_match_batsman_unique_idx
-on public.predictions (match_id, batsman_key)
-where batsman_key <> '';
-
-create unique index if not exists predictions_match_bowler_unique_idx
-on public.predictions (match_id, bowler_key)
-where bowler_key <> '';
+drop index if exists predictions_match_batsman_unique_idx;
+drop index if exists predictions_match_bowler_unique_idx;
+create unique index if not exists predictions_match_combo_unique_idx
+on public.predictions (match_id, batsman_key, bowler_key)
+where batsman_key <> '' and bowler_key <> '';
 
 create unique index if not exists predictions_match_score_unique_idx
 on public.predictions (match_id, predicted_score)
@@ -673,18 +671,9 @@ begin
       where match_id = p_match_id
         and user_id <> v_uid
         and batsman_key = public.normalize_pick(v_batsman)
-    ) then
-      raise exception 'That batsman has already been taken.';
-    end if;
-
-    if exists (
-      select 1
-      from public.predictions
-      where match_id = p_match_id
-        and user_id <> v_uid
         and bowler_key = public.normalize_pick(v_bowler)
     ) then
-      raise exception 'That bowler has already been taken.';
+      raise exception 'That batsman-bowler combination has already been taken.';
     end if;
   end if;
 
@@ -770,7 +759,7 @@ begin
   return v_prediction_id;
 exception
   when unique_violation then
-    raise exception 'That pick was just taken by someone else. Refresh and choose a different option.';
+    raise exception 'That score or batsman-bowler combination was just taken by someone else. Refresh and choose a different option.';
 end;
 $$;
 
@@ -876,19 +865,22 @@ with scored_predictions as (
         then abs(mr.first_innings_total - p.predicted_score)
       else null
     end as score_delta,
-    max(
-      case
-        when mr.first_innings_total is not null and p.predicted_score = mr.first_innings_total then 1
-        else 0
-      end
-    ) over (partition by p.match_id) as has_exact_score,
-    min(
-      case
-        when mr.first_innings_total is not null and p.predicted_score is not null
-          then abs(mr.first_innings_total - p.predicted_score)
-        else null
-      end
-    ) over (partition by p.match_id) as nearest_score_delta
+    row_number() over (
+      partition by p.match_id
+      order by
+        case
+          when mr.first_innings_total is not null and p.predicted_score = mr.first_innings_total then 0
+          else 1
+        end,
+        case
+          when mr.first_innings_total is not null and p.predicted_score is not null
+            then abs(mr.first_innings_total - p.predicted_score)
+          else 2147483647
+        end,
+        coalesce(p.score_submitted_at, p.created_at, 'infinity'::timestamptz),
+        coalesce(p.created_at, 'infinity'::timestamptz),
+        p.id
+    ) as score_rank
   from public.predictions p
   left join public.match_results mr
     on mr.match_id = p.match_id
@@ -904,8 +896,7 @@ resolved_scores as (
     bowler_points,
     case
       when first_innings_total is null or predicted_score is null then 0
-      when predicted_score = first_innings_total then 10
-      when has_exact_score = 0 and score_delta = nearest_score_delta then 10
+      when score_rank = 1 then 10
       else 0
     end as score_points,
     team_points

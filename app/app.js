@@ -765,7 +765,7 @@ function renderHero() {
               </div>
             </div>
             <div class="chip-list">
-              <span class="chip"><strong>No duplicates</strong>First come, first serve</span>
+              <span class="chip"><strong>Unique combo</strong>Batsman + bowler pair only</span>
               <span class="chip"><strong>Player picks</strong>Open until 3.1 overs</span>
               <span class="chip"><strong>Live innings clock</strong>3.1 and 7.1 overs lock automatically</span>
               <span class="chip"><strong>Auto scoring</strong>Completed matches settle themselves</span>
@@ -1140,7 +1140,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
       ? "Player picks are locked. Exact first-innings score is open until 7.1 overs."
       : "All standard prediction windows are locked for this match.";
   const predictionMessage = adminOverrideActive
-    ? `${windowMessage} Admin override is active for you, but duplicate batsman, bowler, and score picks are still blocked.`
+    ? `${windowMessage} Admin override is active for you, but duplicate batsman-bowler combinations and score picks are still blocked.`
     : windowMessage;
   const coreButtonLabel = !hasSquad
     ? squadsLoading
@@ -1268,7 +1268,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
                     </div>
                     <div class="field span-2">
                       <small>
-                        Exact score prediction opens right after 3.1 overs and locks at 7.1 overs. Only numbers are allowed. If nobody hits the exact total, the nearest score gets the points.
+                        Exact score prediction opens right after 3.1 overs and locks at 7.1 overs. Only numbers are allowed. If nobody hits the exact total, the single nearest score gets the points.
                       </small>
                     </div>
                     <div class="field span-2">
@@ -1885,7 +1885,10 @@ async function savePrediction(form) {
   });
   if (conflict) {
     state.lastPredictionConflictKey = conflict.key;
-    showTransientToast("Same combination exists for this match. Choose a different pick.", "error");
+    showTransientToast(
+      conflict.message || "Same batsman-bowler combination exists for this match. Choose a different pair.",
+      "error",
+    );
     return;
   }
 
@@ -2573,32 +2576,20 @@ function findPredictionConflict(matchId, draftPrediction) {
         resolvePlayerCanonicalKey(entry.bowler_name, match) === bowlerKey,
     )
   ) {
-    return { key: `combo:${matchId}:${batsmanKey}:${bowlerKey}` };
-  }
-
-  if (
-    batsmanKey &&
-    otherPredictions.some(
-      (entry) => resolvePlayerCanonicalKey(entry.batsman_name, match) === batsmanKey,
-    )
-  ) {
-    return { key: `batsman:${matchId}:${batsmanKey}` };
-  }
-
-  if (
-    bowlerKey &&
-    otherPredictions.some(
-      (entry) => resolvePlayerCanonicalKey(entry.bowler_name, match) === bowlerKey,
-    )
-  ) {
-    return { key: `bowler:${matchId}:${bowlerKey}` };
+    return {
+      key: `combo:${matchId}:${batsmanKey}:${bowlerKey}`,
+      message: "Same batsman-bowler combination exists for this match. Choose a different pair.",
+    };
   }
 
   if (
     Number.isFinite(predictedScore) &&
     otherPredictions.some((entry) => Number(entry.predicted_score) === predictedScore)
   ) {
-    return { key: `score:${matchId}:${predictedScore}` };
+    return {
+      key: `score:${matchId}:${predictedScore}`,
+      message: "That score prediction has already been taken.",
+    };
   }
 
   return null;
@@ -2634,31 +2625,68 @@ function maybeWarnPredictionConflict(form) {
   }
 
   state.lastPredictionConflictKey = conflictKey;
-  showTransientToast("Same combination exists for this match. Choose a different pick.", "error");
+  showTransientToast(
+    conflict.message || "Same batsman-bowler combination exists for this match. Choose a different pair.",
+    "error",
+  );
 }
 
 function calculateScorePointsForPrediction(prediction, result, matchPredictions) {
   const actualScore = Number(result?.first_innings_total);
-  const predictedScore = Number(prediction?.predicted_score);
-
-  if (!Number.isFinite(actualScore) || !Number.isFinite(predictedScore)) {
+  if (!Number.isFinite(actualScore)) {
     return 0;
   }
 
-  if (predictedScore === actualScore) {
-    return 10;
+  return getScorePredictionWinnerId(matchPredictions, actualScore) === prediction?.id ? 10 : 0;
+}
+
+function getScorePredictionWinnerId(matchPredictions, actualScore) {
+  const validPredictions = asArray(matchPredictions)
+    .map((entry) => ({
+      id: entry?.id || null,
+      predictedScore: Number(entry?.predicted_score),
+      scoreSubmittedAt: entry?.score_submitted_at ? new Date(entry.score_submitted_at).getTime() : null,
+      createdAt: entry?.created_at ? new Date(entry.created_at).getTime() : null,
+    }))
+    .filter((entry) => entry.id && Number.isFinite(entry.predictedScore));
+
+  if (!validPredictions.length) {
+    return null;
   }
 
-  const validPredictions = matchPredictions
-    .map((entry) => Number(entry?.predicted_score))
-    .filter((value) => Number.isFinite(value));
+  validPredictions.sort((left, right) => {
+    const leftExactRank = left.predictedScore === actualScore ? 0 : 1;
+    const rightExactRank = right.predictedScore === actualScore ? 0 : 1;
+    if (leftExactRank !== rightExactRank) {
+      return leftExactRank - rightExactRank;
+    }
 
-  if (!validPredictions.length || validPredictions.includes(actualScore)) {
-    return 0;
-  }
+    const deltaDiff =
+      Math.abs(left.predictedScore - actualScore) - Math.abs(right.predictedScore - actualScore);
+    if (deltaDiff !== 0) {
+      return deltaDiff;
+    }
 
-  const nearestDelta = Math.min(...validPredictions.map((value) => Math.abs(value - actualScore)));
-  return Math.abs(predictedScore - actualScore) === nearestDelta ? 10 : 0;
+    const leftSubmitted = Number.isFinite(left.scoreSubmittedAt)
+      ? left.scoreSubmittedAt
+      : Number.POSITIVE_INFINITY;
+    const rightSubmitted = Number.isFinite(right.scoreSubmittedAt)
+      ? right.scoreSubmittedAt
+      : Number.POSITIVE_INFINITY;
+    if (leftSubmitted !== rightSubmitted) {
+      return leftSubmitted - rightSubmitted;
+    }
+
+    const leftCreated = Number.isFinite(left.createdAt) ? left.createdAt : Number.POSITIVE_INFINITY;
+    const rightCreated = Number.isFinite(right.createdAt) ? right.createdAt : Number.POSITIVE_INFINITY;
+    if (leftCreated !== rightCreated) {
+      return leftCreated - rightCreated;
+    }
+
+    return String(left.id).localeCompare(String(right.id));
+  });
+
+  return validPredictions[0]?.id || null;
 }
 
 function getLiveWindowState(match, prediction) {
@@ -2750,30 +2778,9 @@ function getPlayingXiGroups(match) {
 }
 
 function getSelectablePlayers(match, role, prediction) {
-  const currentValue =
-    role === "batsman" ? prediction?.batsman_name || "" : prediction?.bowler_name || "";
-  const currentKey = resolvePlayerCanonicalKey(currentValue, match);
-  const taken = new Set(
-    getPredictionsForMatch(match.id)
-      .filter((entry) => entry.user_id !== state.user?.id)
-      .map((entry) =>
-        resolvePlayerCanonicalKey(
-          role === "batsman" ? entry.batsman_name : entry.bowler_name,
-          match,
-        ),
-      )
-      .filter(Boolean),
-  );
-
   return getPlayingXiGroups(match).map((group) => ({
     teamName: group.teamName,
-    players: group.players.filter((player) => {
-      const playerKey = normalizeName(player.name);
-      return (
-        playerSupportsSelectionRole(player, role) &&
-        (!taken.has(playerKey) || playerKey === currentKey)
-      );
-    }),
+    players: group.players.filter((player) => playerSupportsSelectionRole(player, role)),
   }));
 }
 
