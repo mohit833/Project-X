@@ -1977,7 +1977,6 @@ async function savePrediction(form) {
       conflict.message || "Same batsman-bowler combination exists for this match. Choose a different pair.",
       "error",
     );
-    return;
   }
 
   const { error } = await state.client.rpc("submit_prediction", {
