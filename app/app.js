@@ -823,7 +823,7 @@ function render() {
           <div class="brand-mark">🏏</div>
           <div class="brand-copy">
             <h1>${escapeHtml(state.appName)}</h1>
-            <p>${state.demoMode ? "Demo mode with sample data" : "Realtime picks, locks, and leaderboard"}</p>
+            <p>${state.demoMode ? "Interactive demo with sample data" : "Live picks, lock windows, and season standings"}</p>
           </div>
         </div>
         <div class="topbar-actions">
@@ -839,14 +839,14 @@ function render() {
                     : `<button class="ghost-btn" data-action="sign-out">Sign out</button>`
                 }
               `
-              : `<a class="ghost-btn" href="#account">Join your league</a>`
+              : `<a class="ghost-btn" href="#account">Open account</a>`
           }
           ${
             state.installPromptEvent && !state.isStandalone
               ? `<button class="ghost-btn" type="button" data-action="install-app">Install app</button>`
               : ""
           }
-          <a class="btn" href="#dashboard">Open dashboard</a>
+          <a class="btn" href="#dashboard">Open league hub</a>
         </div>
       </header>
 
@@ -868,39 +868,78 @@ function renderNotice() {
     return "";
   }
 
+  const tone = state.notice.tone || "info";
+  const noticeMeta = {
+    info: { label: "Heads up", icon: "i" },
+    success: { label: "Saved", icon: "✓" },
+    error: { label: "Check this", icon: "!" },
+  }[tone] || { label: "Notice", icon: "i" };
+
   return `
-    <div class="notice notice-${escapeHtml(state.notice.tone || "info")}">
-      ${escapeHtml(state.notice.message)}
+    <div class="notice notice-${escapeHtml(tone)}">
+      <span class="notice-mark">${escapeHtml(noticeMeta.icon)}</span>
+      <div class="notice-copy">
+        <strong>${escapeHtml(noticeMeta.label)}</strong>
+        <span>${escapeHtml(state.notice.message)}</span>
+      </div>
     </div>
   `;
 }
 
 function renderHero() {
+  const leader = getLeagueWinner();
+  const focusMatch = getLeagueFocusMatch();
+  const leagueEnded = getActiveLeague()?.status === "archived";
+
   return `
     <section class="hero">
       <div class="hero-grid">
-        <div>
-          <div class="eyebrow">Tournament game night, but properly organized</div>
-          <h2>Run your IPL prediction league on one public link.</h2>
+        <div class="hero-story">
+          <div class="eyebrow">IPL prediction room</div>
+          <h2>One league link. Real match pressure. Zero group-chat chaos.</h2>
           <p>
-            Friends pick one batsman, one bowler, one winning team, and one exact first-innings total.
-            The app now pulls the IPL schedule, syncs full match squads, locks picks on the live innings clock, and settles the leaderboard after the match.
+            Bring your friends into one polished space for squad picks, score calls, lock windows, and bragging rights.
+            The app handles the schedule, match engine, and leaderboard so the drama stays on the cricket.
           </p>
           <div class="hero-actions">
-            <a class="btn" href="#dashboard">Start the league</a>
+            <a class="btn" href="#dashboard">Enter league hub</a>
             ${
               state.installPromptEvent && !state.isStandalone
-                ? `<button class="ghost-btn" type="button" data-action="install-app">Add to home screen</button>`
+                ? `<button class="ghost-btn" type="button" data-action="install-app">Install on phone</button>`
                 : ""
             }
           </div>
+          <div class="hero-stat-grid">
+            <div class="hero-stat-card">
+              <span>Player phase</span>
+              <strong>Until 3.1 overs</strong>
+            </div>
+            <div class="hero-stat-card">
+              <span>Score phase</span>
+              <strong>3.1 to 7.1 overs</strong>
+            </div>
+            <div class="hero-stat-card">
+              <span>Uniqueness</span>
+              <strong>Pair + score only</strong>
+            </div>
+          </div>
         </div>
         <div class="hero-meta">
+          <div class="glass-card hero-callout">
+            <span class="panel-kicker">${escapeHtml(getHeroStatusLabel(focusMatch))}</span>
+            <h3>${escapeHtml(focusMatch?.title || "Your league command room is ready")}</h3>
+            <p>${escapeHtml(getLeaguePulseCopy(leagueEnded, leader, focusMatch))}</p>
+            <div class="hero-spotlight">
+              <span class="chip"><strong>Leader</strong>${escapeHtml(leader?.display_name || "Waiting")}</span>
+              <span class="chip"><strong>Your leagues</strong>${escapeHtml(state.memberships.length || 0)}</span>
+              <span class="chip"><strong>Matches tracked</strong>${escapeHtml(state.matches.length || 0)}</span>
+            </div>
+          </div>
           <div class="glass-card">
-            <div class="section-head">
+            <div class="section-head section-head-tight">
               <div>
-                <h3>How scoring works</h3>
-                <p>Same rules you shared, now tracked without WhatsApp chaos.</p>
+                <h3>Scoring system</h3>
+                <p>Clear enough to trust, tense enough to matter.</p>
               </div>
             </div>
             <div class="score-strip">
@@ -910,18 +949,30 @@ function renderHero() {
               <div class="score-pill"><span>Match winner</span><strong>+50</strong></div>
             </div>
           </div>
-          <div class="glass-card">
-            <div class="section-head">
-              <div>
-                <h3>Built for edge cases</h3>
-                <p>Live sync keeps the game fair even when picks race in at the last second.</p>
+          <div class="glass-card hero-playbook">
+            <span class="panel-kicker">Match-day rhythm</span>
+            <div class="playbook-list">
+              <div class="playbook-item">
+                <span>01</span>
+                <div>
+                  <strong>Pick your pair</strong>
+                  <p>Choose one batsman, one bowler, and one winner from the official squad list.</p>
+                </div>
               </div>
-            </div>
-            <div class="chip-list">
-              <span class="chip"><strong>Unique combo</strong>Batsman + bowler pair only</span>
-              <span class="chip"><strong>Player picks</strong>Open until 3.1 overs</span>
-              <span class="chip"><strong>Live innings clock</strong>3.1 and 7.1 overs lock automatically</span>
-              <span class="chip"><strong>Auto scoring</strong>Completed matches settle themselves</span>
+              <div class="playbook-item">
+                <span>02</span>
+                <div>
+                  <strong>Let the overs clock decide</strong>
+                  <p>The app locks player picks at 3.1 overs, then opens score prediction until 7.1.</p>
+                </div>
+              </div>
+              <div class="playbook-item">
+                <span>03</span>
+                <div>
+                  <strong>Watch the board shift</strong>
+                  <p>Scores settle automatically and the table updates without anyone calculating by hand.</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1062,7 +1113,7 @@ function renderLeagueAccessPanel() {
   }
 
   return `
-    <section class="panel">
+    <section class="panel league-access-panel">
       <div class="section-head">
         <div>
           <h3>${state.memberships.length ? "Your leagues" : "Create or join a league"}</h3>
@@ -1076,14 +1127,15 @@ function renderLeagueAccessPanel() {
       ${
         state.memberships.length
           ? `
-            <div class="chip-list">
+            <div class="league-switcher">
               ${state.memberships
                 .map((membership) => {
                   const active = membership.league_id === state.activeLeagueId;
                   const leagueStatus = membership.leagues?.status === "archived" ? "Ended" : "Active";
                   return `
-                    <button class="${active ? "btn" : "ghost-btn"}" type="button" data-action="switch-league" data-league-id="${membership.league_id}">
-                      ${escapeHtml(membership.leagues.name)} · ${escapeHtml(membership.role)} · ${escapeHtml(leagueStatus)}
+                    <button class="league-switcher-card ${active ? "active" : ""}" type="button" data-action="switch-league" data-league-id="${membership.league_id}">
+                      <span class="league-switcher-title">${escapeHtml(membership.leagues.name)}</span>
+                      <span class="league-switcher-meta">${escapeHtml(membership.role)} · ${escapeHtml(leagueStatus)}</span>
                     </button>
                   `;
                 })
@@ -1092,34 +1144,39 @@ function renderLeagueAccessPanel() {
           `
           : ""
       }
-      <div class="grid-2">
-        <form class="panel" id="create-league-form">
+      <div class="grid-2 league-access-grid">
+        <form class="panel action-panel" id="create-league-form">
           <div class="section-head">
             <div>
+              <span class="panel-kicker">Creator setup</span>
               <h4>Create league</h4>
-              <p>You become admin for this league.</p>
+              <p>Open the room, sync the IPL calendar, and run the season from one dashboard.</p>
             </div>
           </div>
           <div class="form-grid">
             <div class="field">
               <label for="league-name">League name</label>
-              <input id="league-name" name="name" placeholder="Mohit IPL League" required />
+              <input id="league-name" name="name" placeholder="Mohit Premier Picks" required />
             </div>
             <div class="field">
               <label for="league-season">Season</label>
               <input id="league-season" name="season" value="IPL 2026" required />
             </div>
             <div class="field span-2">
-              <button class="btn" type="submit">Create league</button>
+              <small>You’ll become admin automatically, get the invite code instantly, and can sync the full fixture list right after creation.</small>
+            </div>
+            <div class="field span-2">
+              <button class="btn" type="submit">Create league room</button>
             </div>
           </div>
         </form>
 
-        <form class="panel" id="join-league-form">
+        <form class="panel action-panel" id="join-league-form">
           <div class="section-head">
             <div>
+              <span class="panel-kicker">Player entry</span>
               <h4>Join league</h4>
-              <p>Paste the invite code from the league admin.</p>
+              <p>Use the invite code once. After that, this device keeps the league saved for you.</p>
             </div>
           </div>
           <div class="form-grid">
@@ -1127,9 +1184,12 @@ function renderLeagueAccessPanel() {
               <label for="invite-code">Invite code</label>
               <input id="invite-code" name="invite_code" placeholder="PLAYIPL" maxlength="12" required />
             </div>
+            <div class="field span-2">
+              <small>You won’t need to keep re-entering the code every time you open the app. Join once, then come straight back to the league.</small>
+            </div>
             <div class="field">
               <label>&nbsp;</label>
-              <button class="btn" type="submit">Join now</button>
+              <button class="btn" type="submit">Join this league</button>
             </div>
           </div>
         </form>
@@ -1159,26 +1219,43 @@ function renderDashboard() {
   const isAdmin = currentMembership()?.role === "admin";
   const leagueWinner = getLeagueWinner();
   const leagueEnded = league?.status === "archived";
+  const focusMatch = getLeagueFocusMatch();
+  const completedMatchCount = getCompletedMatchCount();
 
   return `
     <section class="stack" id="dashboard">
-      <section class="panel">
-        <div class="section-head">
-          <div>
+      <section class="panel league-overview-panel">
+        <div class="league-overview-shell">
+          <div class="league-overview-copy">
+            <span class="panel-kicker">${leagueEnded ? "Season wrapped" : "League command centre"}</span>
             <h3>${escapeHtml(league?.name || "League dashboard")}</h3>
             <p>${
               leagueEnded
-                ? `${escapeHtml(league?.season || "")} · League ended`
-                : `${escapeHtml(league?.season || "")} · Invite code <strong>${escapeHtml(league?.invite_code || "-")}</strong>`
+                ? `${escapeHtml(league?.season || "")} is complete. The winner is locked in and the room now serves as the final archive.`
+                : `Invite your people once, run the full IPL slate from here, and let the app manage locks, squads, and scores in the background.`
             }</p>
+            <div class="league-highlight-row">
+              <span class="chip"><strong>Status</strong>${leagueEnded ? "Ended" : "Active"}</span>
+              <span class="chip"><strong>Your role</strong>${isAdmin ? "Admin" : "Member"}</span>
+              <span class="chip"><strong>Season</strong>${escapeHtml(league?.season || "IPL 2026")}</span>
+              ${
+                leagueEnded
+                  ? ""
+                  : `<span class="chip"><strong>Invite code</strong>${escapeHtml(league?.invite_code || "-")}</span>`
+              }
+            </div>
           </div>
-          <div class="split-line">
+          <div class="league-overview-actions">
+            ${
+              !leagueEnded
+                ? `<button class="ghost-btn" type="button" data-action="copy-invite-code" data-invite-code="${escapeAttribute(league?.invite_code || "")}">Copy invite code</button>`
+                : ""
+            }
             ${
               leagueEnded
                 ? `<span class="tag tag-completed">Ended</span>`
                 : ""
             }
-            <span class="tag ${isAdmin ? "tag-admin" : "tag-member"}">${isAdmin ? "Admin" : "Member"}</span>
             ${
               isAdmin && !leagueEnded
                 ? `<button class="ghost-btn" type="button" data-action="end-league" data-league-id="${league?.id}" ${
@@ -1186,7 +1263,7 @@ function renderDashboard() {
                   }>${state.endingLeagueId === league?.id ? "Ending league..." : "End league"}</button>`
                 : ""
             }
-            <button class="ghost-btn" type="button" data-action="refresh-league">Refresh</button>
+            <button class="ghost-btn" type="button" data-action="refresh-league">Refresh board</button>
           </div>
         </div>
         <div class="metric-grid">
@@ -1202,16 +1279,23 @@ function renderDashboard() {
             <span>Your points</span>
             <strong>${getCurrentUserPoints()}</strong>
           </div>
+          <div class="stat-card">
+            <span>Completed matches</span>
+            <strong>${completedMatchCount}</strong>
+          </div>
         </div>
-        ${
-          leagueEnded && leagueWinner
-            ? `
-              <div class="notice notice-success" style="margin-top: 1rem;">
-                League winner: <strong>${escapeHtml(leagueWinner.display_name)}</strong> with ${escapeHtml(leagueWinner.total_points)} points.
-              </div>
-            `
-            : ""
-        }
+        <div class="league-callouts">
+          <div class="mini-panel spotlight-panel">
+            <span class="panel-kicker">${leagueEnded ? "Champion" : "League leader"}</span>
+            <strong>${escapeHtml(leagueWinner?.display_name || "Waiting for the first result")}</strong>
+            <p>${leagueWinner ? `${escapeHtml(leagueWinner.total_points)} points so far.` : "The board takes shape as soon as scored matches start to land."}</p>
+          </div>
+          <div class="mini-panel spotlight-panel">
+            <span class="panel-kicker">${focusMatch ? "Focus match" : "Next match"}</span>
+            <strong>${escapeHtml(focusMatch?.title || "Sync the season to load fixtures")}</strong>
+            <p>${focusMatch ? `${escapeHtml(formatDate(focusMatch.starts_at))} · ${escapeHtml(computeMatchStatus(focusMatch))}` : "Once fixtures are synced, each match becomes a single-click room for picks and score calls."}</p>
+          </div>
+        </div>
       </section>
 
       <section class="grid-3">
@@ -1309,20 +1393,20 @@ function renderMatchCard(match) {
 
   return `
     <button class="match-card ${active ? "active" : ""}" type="button" data-action="select-match" data-match-id="${match.id}">
-      <div class="inline-meta">
+      <div class="match-card-head">
         <span class="tag tag-${status}">${labelizeStatus(status)}</span>
         <span class="subtle">${escapeHtml(formatDate(match.starts_at))}</span>
       </div>
       <h4>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h4>
-      <div class="match-meta">
+      <div class="match-versus">
         <span>${escapeHtml(match.team_a)}</span>
-        <span>vs</span>
+        <span class="versus-dot">vs</span>
         <span>${escapeHtml(match.team_b)}</span>
       </div>
       <p class="subtle">${escapeHtml(match.venue || "Venue TBD")}</p>
-      <div class="chip-list">
+      <div class="match-card-footer">
         <span class="chip"><strong>${entries.length}</strong>Picks posted</span>
-        <span class="chip"><strong>${escapeHtml(availabilityLabel)}</strong>Window</span>
+        <span class="chip"><strong>${escapeHtml(availabilityLabel)}</strong>Live state</span>
       </div>
     </button>
   `;
@@ -1380,6 +1464,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
     <section class="panel">
       <div class="section-head">
         <div>
+          <span class="panel-kicker">Selected match room</span>
           <h3>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h3>
           <p>${escapeHtml(match.venue || "Venue TBD")} · ${escapeHtml(formatDate(match.starts_at))}</p>
         </div>
@@ -1411,6 +1496,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           <div id="prediction-panel" class="prediction-anchor"></div>
           <div class="section-head">
             <div>
+              <span class="panel-kicker">Your entry</span>
               <h4>Your prediction</h4>
               <p>${predictionMessage}</p>
             </div>
@@ -1552,8 +1638,9 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
         <div class="panel">
           <div class="section-head">
             <div>
+              <span class="panel-kicker">Locked by others</span>
               <h4>Taken picks</h4>
-              <p>These batsmen, bowlers, teams, and scores are already taken for this match.</p>
+              <p>Use this board to avoid duplicated combinations and already-claimed score calls.</p>
             </div>
           </div>
           ${
@@ -1572,6 +1659,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
         <div class="panel">
           <div class="section-head">
             <div>
+              <span class="panel-kicker">Selection pool</span>
               <h4>Team squads</h4>
               <p>${hasSquad ? "Player picks use the official IPL season squads. The live scorecard decides the actual points." : squadsLoading ? "Official IPL team rosters are loading now." : "Official IPL team rosters are not available yet for this fixture."}</p>
             </div>
@@ -1597,8 +1685,9 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
         <div class="panel">
           <div class="section-head">
             <div>
+              <span class="panel-kicker">Live match engine</span>
               <h4>Automation status</h4>
-              <p>The live feed updates the innings clock and settles completed matches.</p>
+              <p>The match engine keeps the innings clock, squad sync, and final settlement in one place.</p>
             </div>
           </div>
           <div class="chip-list">
@@ -1619,6 +1708,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
             <div class="panel">
               <div class="section-head">
                 <div>
+                  <span class="panel-kicker">Result archive</span>
                   <h4>Scored result</h4>
                   <p>Points have been calculated automatically for this match.</p>
                 </div>
@@ -1652,14 +1742,13 @@ function renderPredictionRow(entry) {
       <div>
         <strong>${escapeHtml(entry.league_members?.display_name || "Player")}</strong>
         <div class="entry-meta">
-          <span class="subtle">Batsman: ${escapeHtml(entry.batsman_name || "-")}</span>
-          <span class="subtle">Bowler: ${escapeHtml(entry.bowler_name || "-")}</span>
+          <span class="subtle">Pair: ${escapeHtml(entry.batsman_name || "-")} + ${escapeHtml(entry.bowler_name || "-")}</span>
         </div>
       </div>
       <div class="entry-stats">
         <strong>${escapeHtml(entry.predicted_score ?? "-")}</strong>
         <div class="entry-meta">
-          <span class="subtle">${escapeHtml(entry.team_pick || "-")}</span>
+          <span class="subtle">${escapeHtml(entry.team_pick || "-")} · score call</span>
           ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
         </div>
       </div>
@@ -1676,8 +1765,9 @@ function renderAdminTools(match) {
     <section class="panel">
       <div class="section-head">
         <div>
+          <span class="panel-kicker">Creator console</span>
           <h3>Admin tools</h3>
-          <p>League creator controls schedule sync, live overrides, and manual scoring fallbacks.</p>
+          <p>Use this space to sync the season, correct live timing, and recover gracefully if a feed misbehaves.</p>
         </div>
       </div>
       <div class="stack">
@@ -2393,6 +2483,17 @@ async function handleClick(event) {
       return;
     }
 
+    if (action === "copy-invite-code") {
+      const inviteCode = target.getAttribute("data-invite-code") || "";
+      if (!inviteCode) {
+        throw new Error("Invite code is not available yet.");
+      }
+
+      await navigator.clipboard.writeText(inviteCode);
+      flash(`Invite code ${inviteCode} copied.`, "success");
+      return;
+    }
+
     if (action === "end-league") {
       const leagueId = target.getAttribute("data-league-id") || state.activeLeagueId;
       if (!leagueId) {
@@ -2771,11 +2872,68 @@ function getCurrentUserPoints() {
   return row?.total_points ?? 0;
 }
 
+function getLeagueFocusMatch() {
+  if (!state.matches.length) {
+    return null;
+  }
+
+  const selected = getSelectedMatch();
+  if (selected) {
+    return selected;
+  }
+
+  return state.matches.find((match) => computeMatchStatus(match) === "live")
+    || state.matches.find((match) => {
+      const startsAt = match?.starts_at ? new Date(match.starts_at).getTime() : null;
+      return startsAt && startsAt >= Date.now();
+    })
+    || state.matches[0]
+    || null;
+}
+
+function getCompletedMatchCount() {
+  return state.matches.filter((match) => computeMatchStatus(match) === "completed").length;
+}
+
+function getLeaguePulseCopy(leagueEnded, leader, focusMatch) {
+  if (leagueEnded && leader) {
+    return `${leader.display_name} closed this season on top. The league is frozen and the result is now part of the record.`;
+  }
+
+  if (focusMatch) {
+    const status = computeMatchStatus(focusMatch);
+    if (status === "live" || status === "locked") {
+      return `${focusMatch.team_a} vs ${focusMatch.team_b} is the pressure point right now. Picks, score windows, and auto-scoring all revolve around this fixture.`;
+    }
+
+    return `${focusMatch.team_a} vs ${focusMatch.team_b} is the next big decision. Players can see the full squad early, then the 3.1 and 7.1 locks keep the round fair.`;
+  }
+
+  return "Create the room once, bring everyone in with one code, and let the app run the match-day pressure from there.";
+}
+
+function getHeroStatusLabel(focusMatch) {
+  if (!focusMatch) {
+    return "League ready";
+  }
+
+  const status = computeMatchStatus(focusMatch);
+  if (status === "live" || status === "locked") {
+    return "Match in motion";
+  }
+
+  if (status === "completed") {
+    return "Result archived";
+  }
+
+  return "Next fixture lined up";
+}
+
 function renderLeaderboardRow(entry, index) {
   const sameUser = entry.user_id === state.user?.id;
 
   return `
-    <div class="leaderboard-item ${sameUser ? "current-user" : ""}">
+    <div class="leaderboard-item ${sameUser ? "current-user" : ""} ${index < 3 ? `leaderboard-top leaderboard-top-${index + 1}` : ""}">
       <div class="split-line">
         <div class="leaderboard-rank">${index + 1}</div>
         <div>
@@ -2783,6 +2941,7 @@ function renderLeaderboardRow(entry, index) {
           <div class="leaderboard-meta">
             <span class="subtle">${entry.matches_joined || 0} matches joined</span>
             <span class="subtle">${entry.role}</span>
+            ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
           </div>
         </div>
       </div>
