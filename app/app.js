@@ -382,7 +382,9 @@ async function recoverSessionFromUrl() {
   const authCode = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   const authType = url.searchParams.get("type");
-  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const rawHash = url.hash.replace(/^#/, "");
+  const callbackHash = rawHash.includes("#") ? rawHash.split("#").pop() : rawHash;
+  const hashParams = new URLSearchParams(callbackHash);
   const accessToken = hashParams.get("access_token");
   const refreshToken = hashParams.get("refresh_token");
 
@@ -1832,9 +1834,7 @@ async function submitMagicLink(form) {
 }
 
 function getMagicLinkRedirectUrl() {
-  const url = new URL(window.location.origin + window.location.pathname);
-  url.hash = "account";
-  return url.toString();
+  return new URL(window.location.origin + window.location.pathname).toString();
 }
 
 async function saveProfile(form) {
