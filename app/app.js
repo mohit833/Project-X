@@ -28,6 +28,8 @@ const state = {
   loadingProviderFixtures: false,
   syncingMatchIds: new Set(),
   lastPredictionConflictKey: null,
+  teamSquads: {},
+  loadingTeamSquads: new Set(),
   installPromptEvent: null,
   isStandalone:
     window.matchMedia?.("(display-mode: standalone)")?.matches ||
@@ -248,6 +250,29 @@ const DEMO_PREDICTIONS = [
 const CORE_LOCK_BALL = 19;
 const SCORE_LOCK_BALL = 43;
 const SQUAD_SYNC_LOOKAHEAD_MS = 2 * 60 * 60 * 1000;
+const OFFICIAL_IPL_TEAM_SLUGS = {
+  "chennai-super-kings": "chennai-super-kings",
+  csk: "chennai-super-kings",
+  "delhi-capitals": "delhi-capitals",
+  dc: "delhi-capitals",
+  "gujarat-titans": "gujarat-titans",
+  gt: "gujarat-titans",
+  "kolkata-knight-riders": "kolkata-knight-riders",
+  kkr: "kolkata-knight-riders",
+  "lucknow-super-giants": "lucknow-super-giants",
+  lsg: "lucknow-super-giants",
+  "mumbai-indians": "mumbai-indians",
+  mi: "mumbai-indians",
+  "punjab-kings": "punjab-kings",
+  pbks: "punjab-kings",
+  "rajasthan-royals": "rajasthan-royals",
+  rr: "rajasthan-royals",
+  "royal-challengers-bengaluru": "royal-challengers-bengaluru",
+  "royal-challengers-bangalore": "royal-challengers-bengaluru",
+  rcb: "royal-challengers-bengaluru",
+  "sunrisers-hyderabad": "sunrisers-hyderabad",
+  srh: "sunrisers-hyderabad",
+};
 const IPL_OFFICIAL_COMPETITION_URL = "https://scores.iplt20.com/ipl/mc/competition.js";
 const IPL_OFFICIAL_DEFAULT_FEED_BASE_URL = "https://scores.iplt20.com/ipl/feeds";
 
@@ -681,6 +706,8 @@ function render() {
       </main>
     </div>
   `;
+
+  void ensureOfficialTeamSquadsForMatch(getSelectedMatch());
 }
 
 function renderNotice() {
@@ -1098,6 +1125,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
   const scoreResult = match.match_results;
   const squadGroups = getPlayingXiGroups(match);
   const hasSquad = squadGroups.some((group) => group.players.length);
+  const squadsLoading = isOfficialTeamSquadLoading(match);
   const batsmanOptions = getSelectablePlayers(match, "batsman", prediction);
   const bowlerOptions = getSelectablePlayers(match, "bowler", prediction);
   const syncSummary = getMatchSyncSummary(match);
@@ -1115,7 +1143,9 @@ function renderMatchDetail(match, prediction, isAdmin) {
     ? `${windowMessage} Admin override is active for you, but duplicate batsman, bowler, and score picks are still blocked.`
     : windowMessage;
   const coreButtonLabel = !hasSquad
-    ? "Waiting for squad sync"
+    ? squadsLoading
+      ? "Loading official team squads"
+      : "Waiting for official team squads"
     : canEditCore
       ? adminOverrideActive && !liveWindow.coreWindowOpen
         ? "Save player picks (admin override)"
@@ -1161,6 +1191,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
 
       <div class="grid-2">
         <div class="panel">
+          <div id="prediction-panel" class="prediction-anchor"></div>
           <div class="section-head">
             <div>
               <h4>Your prediction</h4>
@@ -1208,8 +1239,10 @@ function renderMatchDetail(match, prediction, isAdmin) {
                       <small>
                         ${
                           hasSquad
-                            ? "Pick from the synced match squads. Batsman includes batters and all-rounders; bowler includes bowlers and all-rounders. Duplicate batsman and bowler picks are blocked league-wide on a first-come basis. If a chosen player does not make the final XI / scorecard, that pick stays at 0 points unless you change it before 3.1 overs."
-                            : "Waiting for the match squads to sync from the provider. The dropdowns will populate automatically once squad data is available."
+                            ? "Pick from the official IPL team squads. Batsman includes batters and all-rounders; bowler includes bowlers and all-rounders. Final points come only from the actual match scorecard, so a locked pick stays at 0 if that player does not appear in the XI / scorecard."
+                            : squadsLoading
+                              ? "Loading the official IPL team squads for both teams. The dropdowns will populate as soon as those roster pages are fetched."
+                              : "Official IPL team squads are not available yet for this fixture."
                         }
                       </small>
                     </div>
@@ -1322,8 +1355,8 @@ function renderMatchDetail(match, prediction, isAdmin) {
         <div class="panel">
           <div class="section-head">
             <div>
-              <h4>Match squads</h4>
-              <p>${hasSquad ? "Player picks use these synced squads." : "The provider has not published squads for this match yet."}</p>
+              <h4>Team squads</h4>
+              <p>${hasSquad ? "Player picks use the official IPL season squads. The live scorecard decides the actual points." : squadsLoading ? "Official IPL team rosters are loading now." : "Official IPL team rosters are not available yet for this fixture."}</p>
             </div>
           </div>
           ${
@@ -1340,7 +1373,7 @@ function renderMatchDetail(match, prediction, isAdmin) {
                     `,
                   )
                   .join("")
-              : `<div class="empty-state">Once the squad feed is available for this match, the player dropdowns will fill automatically.</div>`
+              : `<div class="empty-state">${squadsLoading ? "Fetching the official IPL squads for these two teams." : "Once the official IPL team rosters are available, the player dropdowns will fill automatically."}</div>`
           }
         </div>
 
@@ -2091,6 +2124,7 @@ async function handleClick(event) {
     if (action === "select-match") {
       state.selectedMatchId = target.getAttribute("data-match-id");
       render();
+      scrollPredictionPanelIntoView();
     }
   } catch (error) {
     console.error(error);
@@ -2145,6 +2179,31 @@ function getSelectedMatch() {
   return (
     state.matches.find((match) => match.id === state.selectedMatchId) || state.matches[0] || null
   );
+}
+
+function scrollPredictionPanelIntoView() {
+  window.requestAnimationFrame(() => {
+    document.getElementById("prediction-panel")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  });
+}
+
+function getOfficialTeamSquad(teamName) {
+  const squad = state.teamSquads[normalizeName(teamName)];
+  return Array.isArray(squad) ? normalizePlayerList(squad, teamName) : [];
+}
+
+function isOfficialTeamSquadLoading(match) {
+  if (!match) {
+    return false;
+  }
+
+  return [match.team_a, match.team_b]
+    .map((teamName) => normalizeName(teamName))
+    .filter(Boolean)
+    .some((teamKey) => state.loadingTeamSquads.has(teamKey));
 }
 
 function chooseDefaultMatchId(matches = state.matches) {
@@ -2323,6 +2382,150 @@ function hasCricketApiConfig() {
   return !state.demoMode && Boolean(String(APP_CONFIG.CRICKET_API_KEY || "").trim());
 }
 
+async function ensureOfficialTeamSquadsForMatch(match) {
+  if (!match?.team_a || !match?.team_b) {
+    return;
+  }
+
+  const seasonYear = getTargetSeasonYear();
+  const teamsToFetch = [match.team_a, match.team_b].filter((teamName) => {
+    const teamKey = normalizeName(teamName);
+    return (
+      teamKey &&
+      !Object.prototype.hasOwnProperty.call(state.teamSquads, teamKey) &&
+      !state.loadingTeamSquads.has(teamKey) &&
+      Boolean(resolveOfficialTeamSlug(teamName))
+    );
+  });
+
+  if (!teamsToFetch.length) {
+    return;
+  }
+
+  for (const teamName of teamsToFetch) {
+    state.loadingTeamSquads.add(normalizeName(teamName));
+  }
+
+  let needsRender = false;
+
+  try {
+    const results = await Promise.allSettled(
+      teamsToFetch.map((teamName) => fetchOfficialTeamSquad(teamName, seasonYear)),
+    );
+
+    results.forEach((result, index) => {
+      const teamName = teamsToFetch[index];
+      const teamKey = normalizeName(teamName);
+
+      if (result.status === "fulfilled") {
+        state.teamSquads[teamKey] = result.value;
+        needsRender = true;
+        return;
+      }
+
+      console.warn(`Official team squad fetch failed for ${teamName}`, result.reason);
+      state.teamSquads[teamKey] = [];
+      needsRender = true;
+    });
+  } finally {
+    for (const teamName of teamsToFetch) {
+      state.loadingTeamSquads.delete(normalizeName(teamName));
+    }
+
+    if (needsRender) {
+      render();
+    }
+  }
+}
+
+function resolveOfficialTeamSlug(teamName) {
+  return OFFICIAL_IPL_TEAM_SLUGS[normalizeName(teamName)] || null;
+}
+
+async function fetchOfficialTeamSquad(teamName, seasonYear) {
+  const teamSlug = resolveOfficialTeamSlug(teamName);
+  if (!teamSlug) {
+    return [];
+  }
+
+  if (shouldUseServerProxy()) {
+    const proxyUrl = new URL("/api/official-ipl", window.location.origin);
+    proxyUrl.searchParams.set("kind", "team-squad");
+    proxyUrl.searchParams.set("teamSlug", teamSlug);
+    proxyUrl.searchParams.set("season", seasonYear);
+
+    const response = await fetch(proxyUrl.toString(), {
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Official squad proxy returned ${response.status}.`);
+    }
+
+    const payload = await response.json();
+    return normalizePlayerList(payload?.players, teamName);
+  }
+
+  const squadUrl = `https://www.iplt20.com/teams/${teamSlug}/squad/${seasonYear}`;
+  const response = await fetch(squadUrl, {
+    headers: {
+      Accept: "text/html,application/xhtml+xml",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Official squad page returned ${response.status}.`);
+  }
+
+  const html = await response.text();
+  return normalizePlayerList(parseOfficialTeamSquadHtml(html), teamName);
+}
+
+function parseOfficialTeamSquadHtml(source) {
+  const cards = Array.from(
+    String(source || "").matchAll(/<li class="dys-box-color ih-pcard1"[^>]*>([\s\S]*?)<\/a>\s*<\/li>/g),
+  );
+  const seen = new Set();
+  const players = [];
+
+  for (const [, block] of cards) {
+    const name = decodeHtmlEntities(
+      block.match(/data-player_name="([^"]+)"/)?.[1] ||
+        block.match(/<div class="ih-p-name">\s*<h2>\s*([^<]+?)\s*<\/h2>/)?.[1] ||
+        "",
+    );
+    const role = decodeHtmlEntities(
+      block.match(/<span class="d-block w-100 text-center">\s*([^<]+?)\s*<\/span>/)?.[1] || "",
+    );
+    const normalizedName = normalizeName(name);
+
+    if (!normalizedName || seen.has(normalizedName)) {
+      continue;
+    }
+
+    seen.add(normalizedName);
+    players.push({
+      name: cleanText(name, 80),
+      role: cleanNullableText(role, 40),
+    });
+  }
+
+  return players;
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function findPredictionConflict(matchId, draftPrediction) {
   if (!matchId) {
     return null;
@@ -2498,15 +2701,21 @@ function getPlayingXiGroups(match) {
   const payload = match?.playing_xi && typeof match.playing_xi === "object"
     ? match.playing_xi
     : buildEmptyPlayingXi();
+  const officialTeamA = getOfficialTeamSquad(match?.team_a);
+  const officialTeamB = getOfficialTeamSquad(match?.team_b);
 
   return [
     {
       teamName: match?.team_a || "Team A",
-      players: normalizePlayerList(payload.team_a, match?.team_a || "Team A"),
+      players: officialTeamA.length
+        ? officialTeamA
+        : normalizePlayerList(payload.team_a, match?.team_a || "Team A"),
     },
     {
       teamName: match?.team_b || "Team B",
-      players: normalizePlayerList(payload.team_b, match?.team_b || "Team B"),
+      players: officialTeamB.length
+        ? officialTeamB
+        : normalizePlayerList(payload.team_b, match?.team_b || "Team B"),
     },
   ];
 }
@@ -2576,10 +2785,15 @@ function renderPlayerSelectOptions(placeholder, groups, selectedValue) {
 
 function getMatchSyncSummary(match) {
   const liveWindow = getLiveWindowState(match, null);
-  const playerCount = getPlayingXiGroups(match).reduce(
+  const squadGroups = getPlayingXiGroups(match);
+  const playerCount = squadGroups.reduce(
     (count, group) => count + group.players.length,
     0,
   );
+  const usingOfficialTeamSquads = squadGroups.every((group) => {
+    const officialPlayers = getOfficialTeamSquad(group.teamName);
+    return officialPlayers.length > 0;
+  });
   const sourceLabel =
     match?.provider === "ipl-official"
       ? "Official IPL"
@@ -2591,7 +2805,13 @@ function getMatchSyncSummary(match) {
 
   return {
     source: sourceLabel,
-    playingXiLabel: playerCount ? `${playerCount} squad players synced` : "Waiting for squads",
+    playingXiLabel: playerCount
+      ? usingOfficialTeamSquads
+        ? `${playerCount} official squad players ready`
+        : `${playerCount} provider players ready`
+      : isOfficialTeamSquadLoading(match)
+        ? "Loading official team squads"
+        : "Waiting for official team squads",
     liveClock: liveWindow.currentOverDisplay
       ? `${liveWindow.currentOverDisplay} overs`
       : match?.innings_started_at

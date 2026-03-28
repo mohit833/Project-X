@@ -292,6 +292,10 @@ button {
   border-color: rgba(255, 118, 118, 0.28);
 }
 
+.prediction-anchor {
+  scroll-margin-top: 18px;
+}
+
 .floating-toast {
   position: fixed;
   right: 18px;
