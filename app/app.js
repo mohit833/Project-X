@@ -369,19 +369,17 @@ async function init() {
     auth: {
       autoRefreshToken: true,
       persistSession: true,
-      detectSessionInUrl: true,
+      detectSessionInUrl: false,
     },
   });
 
-  let {
-    data: { session },
-  } = await state.client.auth.getSession();
+  const recoveredSession = await recoverSessionFromUrl();
+  let session = recoveredSession;
 
   if (!session) {
-    const recoveredSession = await recoverSessionFromUrl();
-    if (recoveredSession) {
-      session = recoveredSession;
-    }
+    ({
+      data: { session },
+    } = await state.client.auth.getSession());
   }
 
   state.session = session;
@@ -445,6 +443,16 @@ async function recoverSessionFromUrl() {
   }
 
   const url = new URL(window.location.href);
+  const authError =
+    url.searchParams.get("error_description") ||
+    url.searchParams.get("error") ||
+    new URLSearchParams(url.hash.replace(/^#/, "")).get("error_description") ||
+    new URLSearchParams(url.hash.replace(/^#/, "")).get("error");
+  if (authError) {
+    clearAuthCallbackParams(url);
+    throw new Error(decodeURIComponent(authError.replace(/\+/g, " ")));
+  }
+
   const authCode = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   const authType = url.searchParams.get("type");
@@ -501,6 +509,9 @@ function clearAuthCallbackParams(url) {
   url.searchParams.delete("code");
   url.searchParams.delete("token_hash");
   url.searchParams.delete("type");
+  url.searchParams.delete("error");
+  url.searchParams.delete("error_code");
+  url.searchParams.delete("error_description");
   url.searchParams.delete("next");
   url.hash = "";
   window.history.replaceState({}, document.title, url.toString());
