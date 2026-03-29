@@ -3085,8 +3085,8 @@ function buildLeaderboardFromMatches(members, predictions, matches) {
 
     const batsmanKey = resolvePlayerCanonicalKey(prediction.batsman_name, match);
     const bowlerKey = resolvePlayerCanonicalKey(prediction.bowler_name, match);
-    row.batsman_points += Number(result.batsman_runs?.[batsmanKey] || 0);
-    row.bowler_points += Number(result.bowler_wickets?.[bowlerKey] || 0) * 20;
+    row.batsman_points += getPlayerStatValue(result.batsman_runs, prediction.batsman_name, match);
+    row.bowler_points += getPlayerStatValue(result.bowler_wickets, prediction.bowler_name, match) * 20;
     row.score_points += calculateScorePointsForPrediction(
       prediction,
       result,
@@ -5254,8 +5254,46 @@ function parseScoreLines(rawText, match) {
   return payload;
 }
 
+function getPlayerStatValue(statMap, playerName, match) {
+  if (!statMap || typeof statMap !== "object") {
+    return 0;
+  }
+
+  const directKeys = Array.from(
+    new Set(
+      [
+        resolvePlayerCanonicalKey(playerName, match),
+        normalizePlayerLookupKey(playerName),
+      ].filter(Boolean),
+    ),
+  );
+
+  for (const key of directKeys) {
+    const value = Number(statMap[key]);
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  const comparableKey = normalizePlayerLookupKey(playerName);
+  if (!comparableKey) {
+    return 0;
+  }
+
+  const aliasMatches = Object.entries(statMap).filter(([storedKey]) => {
+    return normalizePlayerLookupKey(storedKey) === comparableKey;
+  });
+
+  if (aliasMatches.length === 1) {
+    const value = Number(aliasMatches[0][1]);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  return 0;
+}
+
 function resolvePlayerCanonicalKey(name, match) {
-  const fallbackKey = normalizeName(name);
+  const fallbackKey = normalizePlayerLookupKey(name);
   if (!fallbackKey) {
     return "";
   }
@@ -5278,7 +5316,7 @@ function resolvePlayerCanonicalKey(name, match) {
     return aliasMatches[0].key;
   }
 
-  const tokenMatch = resolveUniqueTokenMatch(tokenizePlayerName(name), candidates);
+  const tokenMatch = resolveUniqueTokenMatch(getComparablePlayerTokens(name), candidates);
   return tokenMatch || fallbackKey;
 }
 
@@ -5337,12 +5375,12 @@ function resolveUniqueTokenMatch(tokens, candidates) {
 
 function buildPlayerAliasKeys(name) {
   const aliases = new Set();
-  const baseKey = normalizeName(name);
+  const baseKey = normalizePlayerLookupKey(name);
   if (baseKey) {
     aliases.add(baseKey);
   }
 
-  const tokens = tokenizePlayerName(name);
+  const tokens = getComparablePlayerTokens(name);
   if (!tokens.length) {
     return aliases;
   }
@@ -5414,7 +5452,7 @@ function dropLeadingInitialTokens(tokens) {
 }
 
 function tokenizePlayerName(value) {
-  const normalized = String(value || "")
+  const normalized = cleanMatchPlayerName(value)
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/['’]/g, "")
@@ -5525,6 +5563,14 @@ function normalizeName(value) {
     .replace(/^-+|-+$/g, "");
 }
 
+function getComparablePlayerTokens(value) {
+  return tokenizePlayerName(value).filter((token) => !PLAYER_NAME_IGNORED_TAGS.has(token));
+}
+
+function normalizePlayerLookupKey(value) {
+  return getComparablePlayerTokens(value).join("-");
+}
+
 const PLAYER_NAME_PARTICLES = new Set([
   "al",
   "bin",
@@ -5539,6 +5585,15 @@ const PLAYER_NAME_PARTICLES = new Set([
   "st",
   "van",
   "von",
+]);
+
+const PLAYER_NAME_IGNORED_TAGS = new Set([
+  "c",
+  "cs",
+  "ip",
+  "rp",
+  "sub",
+  "wk",
 ]);
 
 function escapeHtml(value) {

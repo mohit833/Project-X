@@ -23,8 +23,10 @@ module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
 
+  let kind = "";
+
   try {
-    const kind = String(req.query.kind || "").trim();
+    kind = String(req.query.kind || "").trim();
 
     if (kind === "competition") {
       const payload = await fetchJsonpPayload(DEFAULT_COMPETITION_URL);
@@ -116,9 +118,17 @@ module.exports = async (req, res) => {
 
     res.status(400).send(JSON.stringify({ error: "Unsupported official IPL request." }));
   } catch (error) {
+    const status =
+      Number.isInteger(error?.status) && error.status >= 400 && error.status < 600
+        ? error.status
+        : 500;
+    const message =
+      status === 404 && kind.startsWith("match-")
+        ? "Official IPL live file is not published yet for this match."
+        : error?.message || "Official IPL proxy failed.";
     res
-      .status(500)
-      .send(JSON.stringify({ error: error?.message || "Official IPL proxy failed." }));
+      .status(status)
+      .send(JSON.stringify({ error: message }));
   }
 };
 
@@ -131,7 +141,9 @@ async function fetchJsonpPayload(url) {
   });
 
   if (!response.ok) {
-    throw new Error(`Official IPL feed returned ${response.status}.`);
+    const error = new Error(`Official IPL feed returned ${response.status}.`);
+    error.status = response.status;
+    throw error;
   }
 
   const text = await response.text();
@@ -147,7 +159,9 @@ async function fetchText(url) {
   });
 
   if (!response.ok) {
-    throw new Error(`Official IPL page returned ${response.status}.`);
+    const error = new Error(`Official IPL page returned ${response.status}.`);
+    error.status = response.status;
+    throw error;
   }
 
   return response.text();
