@@ -1,6 +1,9 @@
 import { APP_CONFIG } from "./config.js";
 
 const root = document.getElementById("app");
+const THEME_STORAGE_KEY = "ipl-theme-mode";
+const MATCH_ROUTE_SECTIONS = new Set(["fixtures", "centre", "picks", "admin"]);
+const PRIMARY_ROUTE_PAGES = new Set(["home", "matches", "standings", "league", "account"]);
 
 const state = {
   appName: APP_CONFIG.APP_NAME || "IPL Prediction League",
@@ -34,6 +37,13 @@ const state = {
   loadingTeamSquads: new Set(),
   pendingPhoneAuth: readPendingPhoneAuthState(),
   endingLeagueId: null,
+  route: readRouteState(),
+  theme: readStoredTheme(),
+  selectedMatchId: null,
+  fixtureFilters: {
+    team: "all",
+    venue: "all",
+  },
   installPromptEvent: null,
   isStandalone:
     window.matchMedia?.("(display-mode: standalone)")?.matches ||
@@ -346,10 +356,12 @@ document.addEventListener("submit", handleSubmit);
 document.addEventListener("click", handleClick);
 document.addEventListener("change", handleChange);
 document.addEventListener("input", handleInput);
+window.addEventListener("hashchange", handleHashChange);
 window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
 window.addEventListener("appinstalled", handleAppInstalled);
 
 registerServiceWorker();
+applyTheme();
 
 init().catch((error) => {
   console.error(error);
@@ -555,6 +567,7 @@ function loadDemoState() {
     DEMO_PREDICTIONS,
     demoMatches,
   );
+  syncRouteSelection();
 }
 
 async function ensureProfile() {
@@ -723,6 +736,7 @@ async function loadLeagueBundle() {
     state.predictions,
     state.matches,
   );
+  syncRouteSelection();
 
   if (!state.matches.length) {
     teardownRealtime();
@@ -731,13 +745,158 @@ async function loadLeagueBundle() {
     return;
   }
 
-  const currentSelection = getSelectedMatch();
-  if (!currentSelection) {
-    state.selectedMatchId = chooseDefaultMatchId(state.matches);
-  }
-
   setupRealtime(leagueId);
   setupAutoSync();
+}
+
+function readStoredTheme() {
+  if (typeof window === "undefined") {
+    return "dark";
+  }
+
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") {
+    return stored;
+  }
+
+  return window.matchMedia?.("(prefers-color-scheme: light)")?.matches ? "light" : "dark";
+}
+
+function persistTheme() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(THEME_STORAGE_KEY, state.theme);
+}
+
+function applyTheme() {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  document.body.dataset.theme = state.theme;
+  document.documentElement.dataset.theme = state.theme;
+  document.documentElement.style.colorScheme = state.theme;
+
+  const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeColorMeta) {
+    themeColorMeta.setAttribute("content", state.theme === "light" ? "#eef2ff" : "#091d52");
+  }
+}
+
+function isAuthCallbackHash(rawHash) {
+  return /(?:access_token|refresh_token|error_description|token_hash)=/.test(rawHash);
+}
+
+function normalizeRouteState(route = {}) {
+  let page = cleanText(route.page || "home", 30).toLowerCase();
+  const legacyPageMap = {
+    dashboard: "league",
+    setup: "account",
+  };
+  page = legacyPageMap[page] || page;
+
+  if (!PRIMARY_ROUTE_PAGES.has(page)) {
+    page = "home";
+  }
+
+  let section = cleanText(route.section || "", 20).toLowerCase();
+  if (page !== "matches" || !MATCH_ROUTE_SECTIONS.has(section)) {
+    section = page === "matches" ? "fixtures" : "";
+  }
+
+  const matchId = String(route.matchId || "").trim() || null;
+  return { page, section, matchId };
+}
+
+function readRouteState() {
+  if (typeof window === "undefined") {
+    return normalizeRouteState();
+  }
+
+  const rawHash = window.location.hash.replace(/^#/, "");
+  if (!rawHash || isAuthCallbackHash(rawHash)) {
+    return normalizeRouteState();
+  }
+
+  const normalizedHash = rawHash.startsWith("/") ? rawHash.slice(1) : rawHash;
+  const [pathPart, queryPart = ""] = normalizedHash.split("?");
+  const segments = pathPart
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  const params = new URLSearchParams(queryPart);
+  const page = segments[0] || "home";
+  const section = segments[1] || "";
+  const matchId = params.get("match") || segments[2] || null;
+
+  return normalizeRouteState({ page, section, matchId });
+}
+
+function buildRouteHref(route = {}) {
+  const normalized = normalizeRouteState(route);
+  const segments = [normalized.page];
+  if (normalized.page === "matches") {
+    segments.push(normalized.section || "fixtures");
+  }
+
+  const params = new URLSearchParams();
+  if (normalized.matchId) {
+    params.set("match", normalized.matchId);
+  }
+
+  const query = params.toString();
+  return `#/${segments.join("/")}${query ? `?${query}` : ""}`;
+}
+
+function navigateToRoute(route, { scrollToTop = true } = {}) {
+  const nextRoute = normalizeRouteState({
+    ...state.route,
+    ...route,
+  });
+  const nextHash = buildRouteHref(nextRoute);
+
+  state.route = nextRoute;
+  if (nextRoute.matchId) {
+    state.selectedMatchId = nextRoute.matchId;
+  }
+
+  if (window.location.hash === nextHash) {
+    syncRouteSelection();
+    render();
+    if (scrollToTop) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    return;
+  }
+
+  window.location.hash = nextHash;
+}
+
+function handleHashChange() {
+  state.route = readRouteState();
+  syncRouteSelection();
+  render();
+}
+
+function syncRouteSelection() {
+  const requestedMatchId = state.route?.matchId;
+  if (requestedMatchId && state.matches.some((match) => match.id === requestedMatchId)) {
+    state.selectedMatchId = requestedMatchId;
+    return;
+  }
+
+  if (state.selectedMatchId && state.matches.some((match) => match.id === state.selectedMatchId)) {
+    return;
+  }
+
+  state.selectedMatchId = chooseDefaultMatchId(state.matches);
+}
+
+function getCurrentRoute() {
+  return normalizeRouteState(state.route);
 }
 
 function setupRealtime(leagueId) {
@@ -858,51 +1017,264 @@ function scheduleLeagueReload() {
 }
 
 function render() {
+  applyTheme();
+  const route = getCurrentRoute();
+  const routeMeta = getRouteMeta(route);
+
   root.innerHTML = `
-    <div class="page-shell">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">🏏</div>
-          <div class="brand-copy">
-            <h1>${escapeHtml(state.appName)}</h1>
-            <p>${state.demoMode ? "Interactive demo with sample data" : "Live picks, lock windows, and season standings"}</p>
+    <div class="app-shell">
+      <div class="utility-strip">
+        <div class="page-shell utility-strip-inner">
+          <div class="utility-copy">
+            <span class="utility-label">${escapeHtml(getUtilityLabel())}</span>
+            <span class="utility-separator"></span>
+            <span>${escapeHtml(getUtilityMessage())}</span>
+          </div>
+          <div class="utility-actions">
+            ${
+              state.activeLeagueId
+                ? `<span class="utility-chip"><strong>League</strong>${escapeHtml(
+                    getActiveLeague()?.name || "League room",
+                  )}</span>`
+                : ""
+            }
+            ${
+              state.user
+                ? `<span class="utility-chip"><strong>Player</strong>${escapeHtml(
+                    state.profile?.display_name || getUserIdentityLabel() || "Player",
+                  )}</span>`
+                : `<span class="utility-chip"><strong>Access</strong>Sign in to save leagues</span>`
+            }
           </div>
         </div>
-        <div class="topbar-actions">
-          ${
-            state.user
-              ? `
-                <span class="chip"><strong>${escapeHtml(
-                  state.profile?.display_name || getUserIdentityLabel() || "Player",
-                )}</strong>${escapeHtml(getUserIdentityLabel())}</span>
-                ${
-                  state.demoMode
-                    ? ""
-                    : `<button class="ghost-btn" data-action="sign-out">Sign out</button>`
-                }
-              `
-              : `<a class="ghost-btn" href="#account">Open account</a>`
-          }
-          ${
-            state.installPromptEvent && !state.isStandalone
-              ? `<button class="ghost-btn" type="button" data-action="install-app">Install app</button>`
-              : ""
-          }
-          <a class="btn" href="#dashboard">Open league hub</a>
+      </div>
+
+      <header class="site-header">
+        <div class="page-shell site-header-inner">
+          <div class="site-brand">
+            <div class="site-brand-mark">IPL</div>
+            <div class="site-brand-copy">
+              <h1>${escapeHtml(state.appName)}</h1>
+              <p>${escapeHtml(
+                state.demoMode
+                  ? "Interactive demo with live-style league flows"
+                  : "Live picks, score calls, and season standings",
+              )}</p>
+            </div>
+          </div>
+
+          <nav class="primary-nav" aria-label="Primary">
+            ${renderPrimaryNav(route)}
+          </nav>
+
+          <div class="site-actions">
+            <button class="theme-toggle" type="button" data-action="toggle-theme">
+              <span>${state.theme === "dark" ? "Light mode" : "Dark mode"}</span>
+            </button>
+            ${
+              state.installPromptEvent && !state.isStandalone
+                ? `<button class="ghost-btn" type="button" data-action="install-app">Install app</button>`
+                : ""
+            }
+            ${
+              state.user
+                ? `
+                  <span class="chip"><strong>${escapeHtml(
+                    state.profile?.display_name || getUserIdentityLabel() || "Player",
+                  )}</strong>${escapeHtml(getUserIdentityLabel())}</span>
+                  ${
+                    state.demoMode
+                      ? ""
+                      : `<button class="ghost-btn" type="button" data-action="sign-out">Sign out</button>`
+                  }
+                `
+                : `<a class="btn" href="${buildRouteHref({ page: "account" })}">Open account</a>`
+            }
+          </div>
         </div>
       </header>
 
-      <main class="layout">
+      <section class="page-masthead page-masthead-${escapeAttribute(route.page)}">
+        <div class="page-shell page-masthead-inner">
+          <div class="page-breadcrumbs">${renderBreadcrumbs(routeMeta)}</div>
+          <div class="page-masthead-copy">
+            <span class="page-kicker">${escapeHtml(routeMeta.kicker)}</span>
+            <h2>${escapeHtml(routeMeta.title)}</h2>
+            <p>${escapeHtml(routeMeta.description)}</p>
+          </div>
+          ${route.page === "matches" ? renderMatchesSectionTabs(route) : ""}
+        </div>
+      </section>
+
+      <main class="page-shell route-main">
         ${renderNotice()}
-        ${renderHero()}
-        ${renderAccountPanel()}
-        ${renderLeagueAccessPanel()}
-        ${renderDashboard()}
+        ${renderRouteContent(route)}
       </main>
     </div>
   `;
 
   void ensureOfficialTeamSquadsForMatches(state.matches);
+}
+
+function getUtilityLabel() {
+  if (state.demoMode) {
+    return "Demo mode";
+  }
+
+  return getActiveLeague()?.season || APP_CONFIG.DEFAULT_SEASON || "IPL 2026";
+}
+
+function getUtilityMessage() {
+  if (!state.user) {
+    return "Sign in once, then move through your league like a proper tournament site.";
+  }
+
+  if (!state.activeLeagueId) {
+    return "Create a league or join with an invite code to unlock fixtures, picks, and standings.";
+  }
+
+  return `${state.matches.length} fixtures tracked, ${state.members.length} members active, and ${getCompletedMatchCount()} completed results.`;
+}
+
+function renderPrimaryNav(route) {
+  const items = [
+    { label: "Home", route: { page: "home" } },
+    { label: "Matches", route: { page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id } },
+    { label: "Standings", route: { page: "standings" } },
+    { label: "League", route: { page: "league" } },
+    { label: "Account", route: { page: "account" } },
+  ];
+
+  return items
+    .map((item) => {
+      const active =
+        route.page === item.route.page &&
+        (item.route.page !== "matches" || route.page === "matches");
+      return `
+        <a class="primary-nav-link ${active ? "active" : ""}" href="${buildRouteHref(item.route)}">
+          ${escapeHtml(item.label)}
+        </a>
+      `;
+    })
+    .join("");
+}
+
+function getRouteMeta(route) {
+  const selectedMatch = getSelectedMatch();
+  const routeKey =
+    route.page === "matches" ? `matches-${route.section || "fixtures"}` : route.page;
+  const meta = {
+    home: {
+      kicker: "Home",
+      title: "League Home",
+      description: "Jump between live fixtures, score calls, standings, and admin control without losing the flow.",
+      breadcrumbs: ["Home"],
+    },
+    "matches-fixtures": {
+      kicker: "Matches",
+      title: "Fixtures",
+      description: "Browse every league fixture in a cleaner tournament-style timeline with filters and direct match-centre access.",
+      breadcrumbs: ["Home", "Matches", "Fixtures"],
+    },
+    "matches-centre": {
+      kicker: "Matches",
+      title: "Match Centre",
+      description: selectedMatch
+        ? `${selectedMatch.title || `${selectedMatch.team_a} vs ${selectedMatch.team_b}`} · ${selectedMatch.venue || "Venue TBD"}`
+        : "Open one match at a time for picks, live lock windows, squad checks, and result status.",
+      breadcrumbs: ["Home", "Matches", "Match Centre"],
+    },
+    "matches-picks": {
+      kicker: "Matches",
+      title: "Picks Board",
+      description: "See who has already locked their pair, winning team, and exact score call for the selected match.",
+      breadcrumbs: ["Home", "Matches", "Picks Board"],
+    },
+    "matches-admin": {
+      kicker: "Matches",
+      title: "Admin Console",
+      description: "Sync the official fixture feed, override live clocks, and settle results from one creator view.",
+      breadcrumbs: ["Home", "Matches", "Admin Console"],
+    },
+    standings: {
+      kicker: "Standings",
+      title: "Points Table",
+      description: "Track the season race, member totals, and scoring rules in one place.",
+      breadcrumbs: ["Home", "Standings"],
+    },
+    league: {
+      kicker: "League",
+      title: "League Room",
+      description: "The full control centre for invite codes, fixtures, members, scoring, and creator tools.",
+      breadcrumbs: ["Home", "League"],
+    },
+    account: {
+      kicker: "Account",
+      title: "Profile & Access",
+      description: "Manage sign-in, display name, and league access from one dedicated page.",
+      breadcrumbs: ["Home", "Account"],
+    },
+  }[routeKey];
+
+  return meta || {
+    kicker: "Home",
+    title: "League Home",
+    description: "Your IPL prediction room is ready.",
+    breadcrumbs: ["Home"],
+  };
+}
+
+function renderBreadcrumbs(routeMeta) {
+  return routeMeta.breadcrumbs
+    .map((crumb, index) => {
+      const isLast = index === routeMeta.breadcrumbs.length - 1;
+      return `<span class="breadcrumb-item ${isLast ? "active" : ""}">${escapeHtml(crumb)}</span>`;
+    })
+    .join('<span class="breadcrumb-separator">/</span>');
+}
+
+function renderMatchesSectionTabs(route) {
+  const matchId = getSelectedMatch()?.id || route.matchId || "";
+  const sections = [
+    { key: "fixtures", label: "Fixtures" },
+    { key: "centre", label: "Match Centre" },
+    { key: "picks", label: "Picks Board" },
+  ];
+
+  if (currentMembership()?.role === "admin") {
+    sections.push({ key: "admin", label: "Admin" });
+  }
+
+  return `
+    <div class="page-tabs">
+      ${sections
+        .map((section) => `
+          <a
+            class="page-tab ${route.section === section.key ? "active" : ""}"
+            href="${buildRouteHref({ page: "matches", section: section.key, matchId })}"
+          >
+            ${escapeHtml(section.label)}
+          </a>
+        `)
+        .join("")}
+    </div>
+  `;
+}
+
+function renderRouteContent(route) {
+  switch (route.page) {
+    case "matches":
+      return renderMatchesPage(route);
+    case "standings":
+      return renderStandingsPage();
+    case "league":
+      return renderLeaguePage();
+    case "account":
+      return renderAccountPage();
+    case "home":
+    default:
+      return renderHomePage();
+  }
 }
 
 function renderNotice() {
@@ -932,6 +1304,8 @@ function renderHero() {
   const leader = getLeagueWinner();
   const focusMatch = getLeagueFocusMatch();
   const leagueEnded = getActiveLeague()?.status === "archived";
+  const heroHref = buildRouteHref({ page: state.activeLeagueId ? "league" : "account" });
+  const heroCtaLabel = state.activeLeagueId ? "Enter league hub" : "Open account";
 
   return `
     <section class="hero">
@@ -944,7 +1318,7 @@ function renderHero() {
             The app handles the schedule, match engine, and leaderboard so the drama stays on the cricket.
           </p>
           <div class="hero-actions">
-            <a class="btn" href="#dashboard">Enter league hub</a>
+            <a class="btn" href="${heroHref}">${heroCtaLabel}</a>
             ${
               state.installPromptEvent && !state.isStandalone
                 ? `<button class="ghost-btn" type="button" data-action="install-app">Install on phone</button>`
@@ -1021,6 +1395,624 @@ function renderHero() {
       </div>
     </section>
   `;
+}
+
+function renderHomePage() {
+  if (!state.activeLeagueId) {
+    return `
+      <section class="route-stack">
+        ${renderHero()}
+        <section class="home-link-grid">
+          ${renderQuickLinkCard(
+            { page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id },
+            "Fixture wall",
+            "Matches",
+            "Move through the season with a proper fixtures page, then jump straight into the match centre you need.",
+          )}
+          ${renderQuickLinkCard(
+            { page: "standings" },
+            "Points table",
+            "Standings",
+            "Track the race without digging through a single long page.",
+          )}
+          ${renderQuickLinkCard(
+            { page: "account" },
+            "Profile and access",
+            "Account",
+            "Sign in, set your display name, and join or create leagues from one place.",
+          )}
+        </section>
+        ${renderAccountPage()}
+      </section>
+    `;
+  }
+
+  return `
+    <section class="route-stack">
+      ${renderHero()}
+      <section class="home-link-grid">
+        ${renderQuickLinkCard(
+          { page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id },
+          "Fixtures",
+          "Matches",
+          "Browse every scheduled match in a cleaner matchday timeline.",
+        )}
+        ${renderQuickLinkCard(
+          { page: "matches", section: "centre", matchId: getSelectedMatch()?.id },
+          "Match Centre",
+          "Live hub",
+          "Open the active fixture for picks, squads, lock clocks, and result state.",
+        )}
+        ${renderQuickLinkCard(
+          { page: "standings" },
+          "Points Table",
+          "Standings",
+          "See the season race, leader, and total points without leaving the app shell.",
+        )}
+      </section>
+      <div class="route-grid route-grid-home">
+        <div class="route-stack">
+          ${renderLeagueOverviewModule()}
+          ${renderCompactFixturePanel()}
+        </div>
+        <div class="route-stack">
+          ${renderLeaderboardPanel("Season Snapshot")}
+          ${renderMembersPanel("League Members")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderQuickLinkCard(route, eyebrow, title, description) {
+  return `
+    <a class="panel quick-link-card" href="${buildRouteHref(route)}">
+      <span class="panel-kicker">${escapeHtml(eyebrow)}</span>
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(description)}</p>
+      <span class="quick-link-arrow">Open page</span>
+    </a>
+  `;
+}
+
+function renderLeagueOverviewModule() {
+  const league = getActiveLeague();
+  const focusMatch = getLeagueFocusMatch();
+  const leader = getLeagueWinner();
+  const leagueEnded = league?.status === "archived";
+
+  if (!league) {
+    return "";
+  }
+
+  return `
+    <section class="panel route-overview-panel">
+      <div class="section-head">
+        <div>
+          <span class="panel-kicker">${leagueEnded ? "Season complete" : "League overview"}</span>
+          <h3>${escapeHtml(league.name || "League room")}</h3>
+          <p>${
+            leagueEnded
+              ? "The season is archived. The standings stay visible, but picks and invites are frozen."
+              : "Your invite code, live fixture count, and league pulse all live here."
+          }</p>
+        </div>
+        <div class="route-overview-actions">
+          ${
+            leagueEnded
+              ? `<span class="tag tag-completed">Ended</span>`
+              : `<span class="chip"><strong>Invite</strong>${escapeHtml(league.invite_code || "-")}</span>`
+          }
+          <a class="ghost-btn" href="${buildRouteHref({ page: "league" })}">Open control centre</a>
+        </div>
+      </div>
+      <div class="metric-grid">
+        <div class="stat-card">
+          <span>Members</span>
+          <strong>${state.members.length}</strong>
+        </div>
+        <div class="stat-card">
+          <span>Fixtures</span>
+          <strong>${state.matches.length}</strong>
+        </div>
+        <div class="stat-card">
+          <span>Your points</span>
+          <strong>${getCurrentUserPoints()}</strong>
+        </div>
+        <div class="stat-card">
+          <span>Completed</span>
+          <strong>${getCompletedMatchCount()}</strong>
+        </div>
+      </div>
+      <div class="league-callouts">
+        <div class="mini-panel spotlight-panel">
+          <span class="panel-kicker">League leader</span>
+          <strong>${escapeHtml(leader?.display_name || "Waiting for first result")}</strong>
+          <p>${leader ? `${escapeHtml(leader.total_points)} points across the season.` : "Points will land here once matches start settling."}</p>
+        </div>
+        <div class="mini-panel spotlight-panel">
+          <span class="panel-kicker">${focusMatch ? "Focus fixture" : "Next up"}</span>
+          <strong>${escapeHtml(focusMatch?.title || "No synced fixtures yet")}</strong>
+          <p>${focusMatch ? `${escapeHtml(formatDate(focusMatch.starts_at))} · ${escapeHtml(focusMatch.venue || "Venue TBD")}` : "Sync the IPL season and the fixtures page will fill itself in."}</p>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderCompactFixturePanel() {
+  const matches = state.matches.slice(0, 4);
+
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>Upcoming fixtures</h3>
+          <p>Quick access to the next matches in your league.</p>
+        </div>
+        <a class="ghost-btn" href="${buildRouteHref({ page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id })}">View all</a>
+      </div>
+      ${
+        matches.length
+          ? `<div class="mini-fixture-list">${matches.map((match) => renderMiniFixtureRow(match)).join("")}</div>`
+          : `<div class="empty-state">Sync the IPL fixture list and the timeline will appear here.</div>`
+      }
+    </section>
+  `;
+}
+
+function renderMiniFixtureRow(match) {
+  return `
+    <a class="mini-fixture-row" href="${buildRouteHref({ page: "matches", section: "centre", matchId: match.id })}">
+      <div>
+        <strong>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</strong>
+        <div class="entry-meta">
+          <span class="subtle">${escapeHtml(formatFixtureDayLabel(match.starts_at))}</span>
+          <span class="subtle">${escapeHtml(match.venue || "Venue TBD")}</span>
+        </div>
+      </div>
+      <span class="tag tag-${computeMatchStatus(match)}">${escapeHtml(labelizeStatus(computeMatchStatus(match)))}</span>
+    </a>
+  `;
+}
+
+function renderMatchesPage(route) {
+  if (!state.activeLeagueId) {
+    return renderLeagueGate(
+      "Matches unlock after you join a league",
+      "Create or join a league first, then this routed match hub will show fixtures, picks, and standings for that room.",
+    );
+  }
+
+  const section = route.section || "fixtures";
+  const match = getSelectedMatch();
+  const prediction = getCurrentUserPrediction(match?.id);
+  const isAdmin = currentMembership()?.role === "admin";
+  const leagueEnded = getActiveLeague()?.status === "archived";
+
+  if (section === "fixtures") {
+    return `
+      <section class="route-stack">
+        ${renderFixtureFilters()}
+        ${renderFixtureTimeline()}
+      </section>
+    `;
+  }
+
+  return `
+    <section class="matches-route-grid">
+      <aside class="panel match-rail-panel">
+        <div class="section-head">
+          <div>
+            <h3>Fixture list</h3>
+            <p>Choose the match you want to work on.</p>
+          </div>
+        </div>
+        ${renderMatchRail(section)}
+      </aside>
+      <div class="route-stack">
+        ${renderMatchSummaryStrip(match)}
+        ${
+          section === "centre"
+            ? match
+              ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
+              : `<section class="panel"><div class="empty-state">Choose a match to open the match centre.</div></section>`
+            : section === "picks"
+              ? renderPicksBoardPanel(match)
+              : isAdmin
+                ? renderAdminTools(match)
+                : `<section class="panel"><div class="empty-state">Only league admins can open the admin console.</div></section>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderFixtureFilters() {
+  const teamOptions = Array.from(
+    new Set(state.matches.flatMap((match) => [match.team_a, match.team_b]).filter(Boolean)),
+  ).sort((left, right) => left.localeCompare(right));
+  const venueOptions = Array.from(
+    new Set(state.matches.map((match) => match.venue).filter(Boolean)),
+  ).sort((left, right) => left.localeCompare(right));
+
+  return `
+    <section class="fixture-toolbar">
+      <div class="fixture-filter-group">
+        <label class="fixture-filter">
+          <span>Team</span>
+          <select id="fixture-team-filter">
+            <option value="all">All teams</option>
+            ${teamOptions
+              .map(
+                (team) => `
+                  <option value="${escapeAttribute(team)}" ${
+                    state.fixtureFilters.team === team ? "selected" : ""
+                  }>${escapeHtml(team)}</option>
+                `,
+              )
+              .join("")}
+          </select>
+        </label>
+        <label class="fixture-filter">
+          <span>Venue</span>
+          <select id="fixture-venue-filter">
+            <option value="all">All venues</option>
+            ${venueOptions
+              .map(
+                (venue) => `
+                  <option value="${escapeAttribute(venue)}" ${
+                    state.fixtureFilters.venue === venue ? "selected" : ""
+                  }>${escapeHtml(venue)}</option>
+                `,
+              )
+              .join("")}
+          </select>
+        </label>
+      </div>
+      <div class="fixture-toolbar-actions">
+        <button class="ghost-btn" type="button" data-action="clear-fixture-filters">Reset filters</button>
+        <a class="btn" href="${buildRouteHref({ page: "matches", section: "centre", matchId: getSelectedMatch()?.id })}">Open match centre</a>
+      </div>
+    </section>
+  `;
+}
+
+function getFilteredMatches() {
+  return state.matches.filter((match) => {
+    const teamMatch =
+      state.fixtureFilters.team === "all" ||
+      match.team_a === state.fixtureFilters.team ||
+      match.team_b === state.fixtureFilters.team;
+    const venueMatch =
+      state.fixtureFilters.venue === "all" || match.venue === state.fixtureFilters.venue;
+    return teamMatch && venueMatch;
+  });
+}
+
+function renderFixtureTimeline() {
+  const matches = getFilteredMatches();
+
+  return `
+    <section class="fixture-timeline">
+      ${
+        matches.length
+          ? matches
+              .map((match) => renderFixtureTimelineCard(match))
+              .join("")
+          : `<section class="panel"><div class="empty-state">No fixtures match the selected filters yet.</div></section>`
+      }
+    </section>
+  `;
+}
+
+function renderFixtureTimelineCard(match) {
+  const matchNumber = state.matches.findIndex((entry) => entry.id === match.id) + 1;
+  const status = computeMatchStatus(match);
+
+  return `
+    <article class="fixture-card fixture-card-${escapeAttribute(status)}">
+      <div class="fixture-card-date">
+        <span class="fixture-badge">Match ${escapeHtml(matchNumber || "-")}</span>
+        <strong>${escapeHtml(formatFixtureDayLabel(match.starts_at))}</strong>
+        <span>${escapeHtml(formatFixtureTimeLabel(match.starts_at))}</span>
+      </div>
+      <div class="fixture-card-line">
+        <span></span>
+      </div>
+      <div class="fixture-card-main">
+        <div class="fixture-card-headline">
+          <span class="tag tag-${status}">${escapeHtml(labelizeStatus(status))}</span>
+          <span class="fixture-venue">${escapeHtml(match.venue || "Venue TBD")}</span>
+        </div>
+        <div class="fixture-clash">
+          ${renderFixtureTeamBlock(match.team_a)}
+          <span class="fixture-versus">VS</span>
+          ${renderFixtureTeamBlock(match.team_b)}
+        </div>
+      </div>
+      <div class="fixture-card-actions">
+        <button
+          class="match-centre-btn"
+          type="button"
+          data-action="open-match-section"
+          data-section="centre"
+          data-match-id="${match.id}"
+        >
+          Match Centre
+        </button>
+      </div>
+    </article>
+  `;
+}
+
+function renderFixtureTeamBlock(teamName) {
+  return `
+    <div class="fixture-team-block">
+      <span class="fixture-team-badge">${escapeHtml(getTeamShortCode(teamName))}</span>
+      <strong>${escapeHtml(teamName)}</strong>
+    </div>
+  `;
+}
+
+function renderMatchRail(section) {
+  if (!state.matches.length) {
+    return `<div class="empty-state">No fixtures are loaded yet.</div>`;
+  }
+
+  return `
+    <div class="match-rail">
+      ${state.matches
+        .map(
+          (match) => `
+            <button
+              class="match-rail-item ${match.id === getSelectedMatch()?.id ? "active" : ""}"
+              type="button"
+              data-action="open-match-section"
+              data-section="${escapeAttribute(section)}"
+              data-match-id="${match.id}"
+            >
+              <span class="match-rail-title">${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</span>
+              <span class="match-rail-meta">${escapeHtml(formatFixtureDayLabel(match.starts_at))} · ${escapeHtml(labelizeStatus(computeMatchStatus(match)))}</span>
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderMatchSummaryStrip(match) {
+  if (!match) {
+    return `
+      <section class="panel">
+        <div class="empty-state">No match selected yet. Pick one from the left-hand rail.</div>
+      </section>
+    `;
+  }
+
+  const liveWindow = getLiveWindowState(match, getCurrentUserPrediction(match.id));
+  const summary = getMatchSyncSummary(match);
+
+  return `
+    <section class="panel match-summary-strip">
+      <div>
+        <span class="panel-kicker">${escapeHtml(labelizeStatus(computeMatchStatus(match)))}</span>
+        <h3>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h3>
+        <p>${escapeHtml(match.venue || "Venue TBD")} · ${escapeHtml(formatDate(match.starts_at))}</p>
+      </div>
+      <div class="match-summary-chips">
+        <span class="chip"><strong>Window</strong>${escapeHtml(liveWindow.scoreWindowOpen ? "Score phase" : liveWindow.coreWindowOpen ? "Player picks" : "Locked")}</span>
+        <span class="chip"><strong>Clock</strong>${escapeHtml(summary?.inningsClock || "Waiting")}</span>
+        <span class="chip"><strong>Posted picks</strong>${escapeHtml(getPredictionsForMatch(match.id).length)}</span>
+      </div>
+    </section>
+  `;
+}
+
+function renderPicksBoardPanel(match) {
+  if (!match) {
+    return `<section class="panel"><div class="empty-state">Choose a match to review the picks board.</div></section>`;
+  }
+
+  const entries = getPredictionsForMatch(match.id);
+  const prediction = getCurrentUserPrediction(match.id);
+  const matchResult = getMatchResult(match);
+
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>Picks board</h3>
+          <p>Every submitted pair, winner call, and score entry for ${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}.</p>
+        </div>
+      </div>
+      <div class="chip-list">
+        <span class="chip"><strong>Your picks</strong>${prediction ? "Saved" : "Not submitted"}</span>
+        <span class="chip"><strong>Total entries</strong>${entries.length}</span>
+        <span class="chip"><strong>Result</strong>${matchResult ? "Settled" : "Pending"}</span>
+      </div>
+      ${
+        entries.length
+          ? `<div class="entry-list picks-board-list">${entries.map((entry) => renderPredictionRow(entry)).join("")}</div>`
+          : `<div class="empty-state">No one has posted picks for this match yet.</div>`
+      }
+    </section>
+  `;
+}
+
+function renderStandingsPage() {
+  if (!state.activeLeagueId) {
+    return renderLeagueGate(
+      "Standings appear once you join a league",
+      "Join or create a league first, then the points table will stay available as its own routed page.",
+    );
+  }
+
+  return `
+    <section class="route-stack">
+      ${renderLeagueOverviewModule()}
+      <div class="route-grid route-grid-standings">
+        ${renderLeaderboardPanel("Season Table")}
+        ${renderMembersPanel("League Members")}
+        ${renderScoringPanel()}
+      </div>
+    </section>
+  `;
+}
+
+function renderLeaguePage() {
+  if (!state.activeLeagueId) {
+    return renderLeagueGate(
+      "Create or join a league",
+      "Once you are inside a league, this page becomes your full tournament control centre.",
+    );
+  }
+
+  return renderDashboard();
+}
+
+function renderAccountPage() {
+  return `
+    <section class="route-grid route-grid-account">
+      <div class="route-stack">
+        ${renderAccountPanel()}
+        ${renderSetupPanel()}
+      </div>
+      <div class="route-stack">
+        ${renderLeagueAccessPanel()}
+        ${renderScoringPanel()}
+      </div>
+    </section>
+  `;
+}
+
+function renderLeagueGate(title, description) {
+  return `
+    <section class="route-stack">
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(description)}</p>
+          </div>
+        </div>
+      </section>
+      ${renderAccountPage()}
+    </section>
+  `;
+}
+
+function renderLeaderboardPanel(title = "Leaderboard") {
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          <p>Season totals across every completed match in the active league.</p>
+        </div>
+      </div>
+      ${
+        state.leaderboard.length
+          ? `<div class="leaderboard-list">${state.leaderboard
+              .map((entry, index) => renderLeaderboardRow(entry, index))
+              .join("")}</div>`
+          : `<div class="empty-state">Points appear after the first scored match.</div>`
+      }
+    </section>
+  `;
+}
+
+function renderMembersPanel(title = "Players") {
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          <p>Everyone active in the current league.</p>
+        </div>
+      </div>
+      ${
+        state.members.length
+          ? `<div class="member-list">${state.members
+              .map(
+                (member) => `
+                  <div class="member-item">
+                    <div>
+                      <strong>${escapeHtml(member.display_name)}</strong>
+                      <span class="subtle">Joined ${escapeHtml(formatDate(member.joined_at, "date"))}</span>
+                    </div>
+                    <span class="tag ${member.role === "admin" ? "tag-admin" : "tag-member"}">${escapeHtml(member.role)}</span>
+                  </div>
+                `,
+              )
+              .join("")}</div>`
+          : `<div class="empty-state">No members are active in this league yet.</div>`
+      }
+    </section>
+  `;
+}
+
+function renderScoringPanel() {
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>Scoring system</h3>
+          <p>The exact same rules, just presented in a cleaner route.</p>
+        </div>
+      </div>
+      <div class="score-strip">
+        <div class="score-pill"><span>Batsman</span><strong>Runs = points</strong></div>
+        <div class="score-pill"><span>Bowler</span><strong>20 per wicket</strong></div>
+        <div class="score-pill"><span>Exact total</span><strong>+10</strong></div>
+        <div class="score-pill"><span>Winning team</span><strong>+50</strong></div>
+      </div>
+    </section>
+  `;
+}
+
+function formatFixtureDayLabel(value) {
+  if (!value) {
+    return "DATE TBD";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "DATE TBD";
+  }
+
+  const parts = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    weekday: "short",
+    day: "numeric",
+  }).formatToParts(date);
+
+  const month = parts.find((part) => part.type === "month")?.value || "";
+  const weekday = parts.find((part) => part.type === "weekday")?.value || "";
+  const day = parts.find((part) => part.type === "day")?.value || "";
+  return `${month}, ${weekday} ${day}`.toUpperCase();
+}
+
+function formatFixtureTimeLabel(value) {
+  if (!value) {
+    return "Time TBD";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Time TBD";
+  }
+
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  const zone =
+    new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+      .formatToParts(date)
+      .find((part) => part.type === "timeZoneName")?.value || "";
+  return `${time} ${zone}`.trim();
 }
 
 function renderSetupPanel() {
@@ -2478,6 +3470,13 @@ async function handleClick(event) {
   const action = target.getAttribute("data-action");
 
   try {
+    if (action === "toggle-theme") {
+      state.theme = state.theme === "light" ? "dark" : "light";
+      persistTheme();
+      render();
+      return;
+    }
+
     if (action === "sign-out") {
       clearPendingPhoneAuthState();
       await state.client.auth.signOut();
@@ -2595,10 +3594,46 @@ async function handleClick(event) {
       return;
     }
 
+    if (action === "clear-fixture-filters") {
+      state.fixtureFilters = {
+        team: "all",
+        venue: "all",
+      };
+      render();
+      return;
+    }
+
+    if (action === "open-match-section") {
+      const section = target.getAttribute("data-section") || state.route?.section || "centre";
+      const matchId = target.getAttribute("data-match-id") || getSelectedMatch()?.id;
+      navigateToRoute(
+        {
+          page: "matches",
+          section,
+          matchId,
+        },
+        { scrollToTop: false },
+      );
+      return;
+    }
+
     if (action === "select-match") {
       state.selectedMatchId = target.getAttribute("data-match-id");
+      if (state.route?.page === "matches") {
+        navigateToRoute(
+          {
+            page: "matches",
+            section: state.route.section || "centre",
+            matchId: state.selectedMatchId,
+          },
+          { scrollToTop: false },
+        );
+        return;
+      }
+
       render();
       scrollPredictionPanelIntoView();
+      return;
     }
   } catch (error) {
     console.error(error);
@@ -2609,6 +3644,18 @@ async function handleClick(event) {
 function handleChange(event) {
   const target = event.target;
   if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  if (target instanceof HTMLSelectElement && target.id === "fixture-team-filter") {
+    state.fixtureFilters.team = target.value || "all";
+    render();
+    return;
+  }
+
+  if (target instanceof HTMLSelectElement && target.id === "fixture-venue-filter") {
+    state.fixtureFilters.venue = target.value || "all";
+    render();
     return;
   }
 
