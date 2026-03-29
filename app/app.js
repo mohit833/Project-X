@@ -599,11 +599,9 @@ async function ensureProfile() {
 }
 
 async function loadMemberships() {
-  const { data, error } = await state.client
+  const { data: membershipRows, error } = await state.client
     .from("league_members")
-    .select(
-      "id, league_id, display_name, role, is_active, joined_at, leagues(id, name, season, invite_code, status, created_by, created_at)",
-    )
+    .select("id, league_id, display_name, role, is_active, joined_at")
     .eq("user_id", state.user.id)
     .eq("is_active", true)
     .order("joined_at", { ascending: true });
@@ -612,7 +610,41 @@ async function loadMemberships() {
     throw error;
   }
 
-  state.memberships = data || [];
+  const memberships = membershipRows || [];
+  const leagueIds = [...new Set(memberships.map((membership) => membership.league_id).filter(Boolean))];
+  const fallbackSeason =
+    cleanText(getActiveLeague()?.season || APP_CONFIG.DEFAULT_SEASON || "IPL 2026", 40) ||
+    "IPL 2026";
+
+  let leaguesById = new Map();
+  if (leagueIds.length) {
+    const { data: leaguesData, error: leaguesError } = await state.client
+      .from("leagues")
+      .select("id, name, season, invite_code, status, created_by, created_at")
+      .in("id", leagueIds);
+
+    if (leaguesError) {
+      console.warn("League details lookup failed, falling back to membership-only cards.", leaguesError);
+    } else {
+      leaguesById = new Map((leaguesData || []).map((league) => [league.id, league]));
+    }
+  }
+
+  state.memberships = memberships.map((membership) => ({
+    ...membership,
+    leagues:
+      leaguesById.get(membership.league_id) ||
+      membership.leagues ||
+      {
+        id: membership.league_id,
+        name: "Joined league",
+        season: fallbackSeason,
+        invite_code: "",
+        status: "active",
+        created_by: null,
+        created_at: membership.joined_at,
+      },
+  }));
 
   if (!state.memberships.length) {
     state.activeLeagueId = null;
@@ -1111,10 +1143,11 @@ function renderLeagueAccessPanel() {
               ${state.memberships
                 .map((membership) => {
                   const active = membership.league_id === state.activeLeagueId;
+                  const leagueName = membership.leagues?.name || "Joined league";
                   const leagueStatus = membership.leagues?.status === "archived" ? "Ended" : "Active";
                   return `
                     <button class="league-switcher-card ${active ? "active" : ""}" type="button" data-action="switch-league" data-league-id="${membership.league_id}">
-                      <span class="league-switcher-title">${escapeHtml(membership.leagues.name)}</span>
+                      <span class="league-switcher-title">${escapeHtml(leagueName)}</span>
                       <span class="league-switcher-meta">${escapeHtml(membership.role)} · ${escapeHtml(leagueStatus)}</span>
                     </button>
                   `;
@@ -2611,7 +2644,7 @@ function getUserIdentityLabel() {
 }
 
 function getTeamShortCode(teamName) {
-  const normalized = slugify(teamName || "");
+  const normalized = normalizeName(teamName || "");
   const preset = {
     "chennai-super-kings": "CSK",
     "delhi-capitals": "DC",
