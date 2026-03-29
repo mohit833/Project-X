@@ -1,4 +1,4 @@
-const CACHE_NAME = "ipl-prediction-league-v2";
+const CACHE_NAME = "ipl-prediction-league-v3";
 const CORE_ASSETS = [
   "./",
   "./index.html",

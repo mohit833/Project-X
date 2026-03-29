@@ -1,7 +1,7 @@
 import { APP_CONFIG } from "./config.js";
 
 const root = document.getElementById("app");
-const THEME_STORAGE_KEY = "ipl-theme-mode";
+const THEME_STORAGE_KEY = "ipl-theme-mode-v2";
 const MATCH_ROUTE_SECTIONS = new Set(["fixtures", "centre", "picks", "admin"]);
 const PRIMARY_ROUTE_PAGES = new Set(["home", "matches", "standings", "league", "account"]);
 
@@ -751,7 +751,7 @@ async function loadLeagueBundle() {
 
 function readStoredTheme() {
   if (typeof window === "undefined") {
-    return "dark";
+    return "light";
   }
 
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -759,7 +759,7 @@ function readStoredTheme() {
     return stored;
   }
 
-  return window.matchMedia?.("(prefers-color-scheme: light)")?.matches ? "light" : "dark";
+  return "light";
 }
 
 function persistTheme() {
@@ -1139,10 +1139,10 @@ function getUtilityMessage() {
 function renderPrimaryNav(route) {
   const items = [
     { label: "Home", route: { page: "home" } },
-    { label: "Matches", route: { page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id } },
-    { label: "Standings", route: { page: "standings" } },
-    { label: "League", route: { page: "league" } },
-    { label: "Account", route: { page: "account" } },
+    { label: "Fixtures", route: { page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id } },
+    { label: "Table", route: { page: "standings" } },
+    { label: "League Hub", route: { page: "league" } },
+    { label: "Profile", route: { page: "account" } },
   ];
 
   return items
@@ -1398,80 +1398,220 @@ function renderHero() {
 }
 
 function renderHomePage() {
-  if (!state.activeLeagueId) {
-    return `
-      <section class="route-stack">
-        ${renderHero()}
-        <section class="home-link-grid">
-          ${renderQuickLinkCard(
-            { page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id },
-            "Fixture wall",
-            "Matches",
-            "Move through the season with a proper fixtures page, then jump straight into the match centre you need.",
-          )}
-          ${renderQuickLinkCard(
-            { page: "standings" },
-            "Points table",
-            "Standings",
-            "Track the race without digging through a single long page.",
-          )}
-          ${renderQuickLinkCard(
-            { page: "account" },
-            "Profile and access",
-            "Account",
-            "Sign in, set your display name, and join or create leagues from one place.",
-          )}
-        </section>
-        ${renderAccountPage()}
-      </section>
-    `;
-  }
-
   return `
     <section class="route-stack">
-      ${renderHero()}
-      <section class="home-link-grid">
+      ${renderBroadcastHero()}
+      <section class="spotlight-link-grid">
         ${renderQuickLinkCard(
           { page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id },
-          "Fixtures",
-          "Matches",
-          "Browse every scheduled match in a cleaner matchday timeline.",
+          "Schedule",
+          "Fixtures Wall",
+          "Follow the full season in a matchday timeline that feels closer to a tournament site than a form app.",
         )}
         ${renderQuickLinkCard(
           { page: "matches", section: "centre", matchId: getSelectedMatch()?.id },
+          "Live room",
           "Match Centre",
-          "Live hub",
-          "Open the active fixture for picks, squads, lock clocks, and result state.",
+          "Open one fixture at a time for squads, locks, posted picks, and result flow.",
         )}
         ${renderQuickLinkCard(
           { page: "standings" },
+          "Season race",
           "Points Table",
-          "Standings",
-          "See the season race, leader, and total points without leaving the app shell.",
+          "Keep the table, leader, and scoring story on their own clean route.",
+        )}
+        ${renderQuickLinkCard(
+          { page: state.activeLeagueId ? "league" : "account" },
+          state.activeLeagueId ? "League room" : "Get started",
+          state.activeLeagueId ? "League Hub" : "Open Profile",
+          state.activeLeagueId
+            ? "Jump into the league hub for invites, members, and the selected fixture."
+            : "Sign in, create a league, or join one without digging through product setup content.",
         )}
       </section>
-      <div class="route-grid route-grid-home">
-        <div class="route-stack">
-          ${renderLeagueOverviewModule()}
-          ${renderCompactFixturePanel()}
-        </div>
-        <div class="route-stack">
-          ${renderLeaderboardPanel("Season Snapshot")}
-          ${renderMembersPanel("League Members")}
-        </div>
-      </div>
+      ${
+        state.activeLeagueId
+          ? `
+            <div class="league-hub-grid">
+              <div class="route-stack">
+                ${renderLeagueStudioPanel()}
+                ${renderCompactFixturePanel()}
+              </div>
+              <div class="route-stack">
+                ${renderLeaderboardPanel("Top of the Table")}
+                ${renderMembersPanel("League Squad")}
+              </div>
+            </div>
+          `
+          : `
+            <div class="profile-route-grid">
+              <div class="profile-route-stack">
+                ${renderAccountPanel()}
+                ${renderPredictionWindowsPanel()}
+              </div>
+              <div class="profile-route-stack">
+                ${renderLeagueAccessPanel()}
+                ${renderScoringPanel()}
+              </div>
+            </div>
+          `
+      }
     </section>
   `;
 }
 
 function renderQuickLinkCard(route, eyebrow, title, description) {
   return `
-    <a class="panel quick-link-card" href="${buildRouteHref(route)}">
+    <a class="panel quick-link-card feature-link" href="${buildRouteHref(route)}">
       <span class="panel-kicker">${escapeHtml(eyebrow)}</span>
       <h3>${escapeHtml(title)}</h3>
       <p>${escapeHtml(description)}</p>
       <span class="quick-link-arrow">Open page</span>
     </a>
+  `;
+}
+
+function renderBroadcastHero() {
+  const league = getActiveLeague();
+  const focusMatch = getLeagueFocusMatch();
+  const leader = getLeagueWinner();
+  const focusStatus = focusMatch ? labelizeStatus(computeMatchStatus(focusMatch)) : "Waiting";
+  const focusTitle = focusMatch?.title || "Sync the league and the season card lands here";
+  const focusVenue = focusMatch?.venue || "Venue to be confirmed";
+  const fixtureHref = buildRouteHref({
+    page: "matches",
+    section: focusMatch ? "centre" : "fixtures",
+    matchId: focusMatch?.id || getSelectedMatch()?.id,
+  });
+
+  return `
+    <section class="broadcast-hero">
+      <div class="broadcast-copy">
+        <span class="panel-kicker">${league ? "IPL League Live" : "Prediction League"}</span>
+        <h2>Matchday should feel like matchday, not a spreadsheet with buttons.</h2>
+        <p>
+          This app now moves like a cricket product: fixtures first, match centre next, standings always close,
+          and your league room available without dumping setup docs in front of players.
+        </p>
+        <div class="hero-actions">
+          <a class="btn" href="${fixtureHref}">${focusMatch ? "Open match centre" : "Browse fixtures"}</a>
+          <a class="ghost-btn" href="${buildRouteHref({ page: state.activeLeagueId ? "league" : "account" })}">
+            ${state.activeLeagueId ? "Open league hub" : "Open profile"}
+          </a>
+        </div>
+        <div class="broadcast-meta-grid">
+          <div class="broadcast-stat">
+            <span>League</span>
+            <strong>${escapeHtml(league?.name || "No league joined")}</strong>
+          </div>
+          <div class="broadcast-stat">
+            <span>Fixtures</span>
+            <strong>${escapeHtml(state.matches.length || 0)}</strong>
+          </div>
+          <div class="broadcast-stat">
+            <span>Leader</span>
+            <strong>${escapeHtml(leader?.display_name || "Waiting")}</strong>
+          </div>
+        </div>
+      </div>
+      <div class="broadcast-scoreboard">
+        <div class="broadcast-scoreboard-head">
+          <span class="tag tag-${focusMatch ? computeMatchStatus(focusMatch) : "scheduled"}">${escapeHtml(focusStatus)}</span>
+          <span class="subtle">${escapeHtml(focusMatch ? formatDate(focusMatch.starts_at) : "League not synced yet")}</span>
+        </div>
+        <strong class="broadcast-title">${escapeHtml(focusTitle)}</strong>
+        <div class="broadcast-clash">
+          <div class="broadcast-team">
+            <span>${escapeHtml(getTeamShortCode(focusMatch?.team_a || "Team A"))}</span>
+            <strong>${escapeHtml(focusMatch?.team_a || "Team A")}</strong>
+          </div>
+          <div class="broadcast-versus">VS</div>
+          <div class="broadcast-team">
+            <span>${escapeHtml(getTeamShortCode(focusMatch?.team_b || "Team B"))}</span>
+            <strong>${escapeHtml(focusMatch?.team_b || "Team B")}</strong>
+          </div>
+        </div>
+        <div class="broadcast-detail-row">
+          <span class="chip"><strong>Venue</strong>${escapeHtml(focusVenue)}</span>
+          <span class="chip"><strong>Members</strong>${escapeHtml(state.members.length || 0)}</span>
+          <span class="chip"><strong>Your points</strong>${escapeHtml(getCurrentUserPoints())}</span>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderLeagueStudioPanel() {
+  const league = getActiveLeague();
+  const match = getSelectedMatch();
+  const leader = getLeagueWinner();
+  const isAdmin = currentMembership()?.role === "admin";
+  const leagueEnded = league?.status === "archived";
+
+  if (!league) {
+    return "";
+  }
+
+  return `
+    <section class="panel league-command-stage">
+      <div class="league-command-head">
+        <div>
+          <span class="panel-kicker">${leagueEnded ? "Season archive" : "League hub"}</span>
+          <h3>${escapeHtml(league.name || "League room")}</h3>
+          <p>
+            ${leagueEnded
+              ? "The season is closed and preserved as the final archive."
+              : "Invites, match focus, and the league pulse live here instead of inside a long scrolling dashboard."}
+          </p>
+        </div>
+        <div class="league-command-actions">
+          ${
+            leagueEnded
+              ? `<span class="tag tag-completed">Ended</span>`
+              : `<span class="chip"><strong>Invite</strong>${escapeHtml(league.invite_code || "-")}</span>`
+          }
+          ${
+            !leagueEnded
+              ? `<button class="ghost-btn" type="button" data-action="copy-invite-code" data-invite-code="${escapeAttribute(league.invite_code || "")}">Copy invite</button>`
+              : ""
+          }
+          <button class="ghost-btn" type="button" data-action="refresh-league">Refresh</button>
+          ${
+            isAdmin && !leagueEnded
+              ? `<button class="ghost-btn" type="button" data-action="end-league" data-league-id="${league.id}" ${
+                  state.endingLeagueId === league.id ? "disabled" : ""
+                }>${state.endingLeagueId === league.id ? "Ending..." : "End season"}</button>`
+              : ""
+          }
+        </div>
+      </div>
+      <div class="league-command-stats">
+        <div class="broadcast-stat">
+          <span>Season</span>
+          <strong>${escapeHtml(league.season || "IPL 2026")}</strong>
+        </div>
+        <div class="broadcast-stat">
+          <span>Completed</span>
+          <strong>${escapeHtml(getCompletedMatchCount())}</strong>
+        </div>
+        <div class="broadcast-stat">
+          <span>Leader</span>
+          <strong>${escapeHtml(leader?.display_name || "Waiting")}</strong>
+        </div>
+      </div>
+      <div class="league-context-grid">
+        <div class="context-card">
+          <span class="panel-kicker">Selected match</span>
+          <strong>${escapeHtml(match?.title || "Choose a fixture from Matches")}</strong>
+          <p>${escapeHtml(match ? `${formatDate(match.starts_at)} · ${match.venue || "Venue TBD"}` : "Open Fixtures or Match Centre to select the game you want to work on.")}</p>
+        </div>
+        <div class="context-card">
+          <span class="panel-kicker">Your role</span>
+          <strong>${escapeHtml(isAdmin ? "League Admin" : "League Member")}</strong>
+          <p>${escapeHtml(isAdmin ? "You can sync official data, end the season, and settle results." : "You can post picks, track the table, and follow every fixture from the same shell.")}</p>
+        </div>
+      </div>
+    </section>
   `;
 }
 
@@ -1869,19 +2009,72 @@ function renderLeaguePage() {
     );
   }
 
-  return renderDashboard();
+  const match = getSelectedMatch();
+  const prediction = getCurrentUserPrediction(match?.id);
+  const isAdmin = currentMembership()?.role === "admin";
+  const leagueEnded = getActiveLeague()?.status === "archived";
+
+  return `
+    <section class="route-stack">
+      ${renderLeagueStudioPanel()}
+      <div class="league-hub-grid">
+        <div class="route-stack">
+          ${renderMatchSummaryStrip(match)}
+          ${
+            match
+              ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
+              : `<section class="panel"><div class="empty-state">Open a fixture from Matches to bring it into the league hub.</div></section>`
+          }
+        </div>
+        <div class="route-stack">
+          ${renderLeaderboardPanel("League Table")}
+          ${renderMembersPanel("League Squad")}
+        </div>
+      </div>
+      ${isAdmin && !leagueEnded ? renderAdminTools(match) : ""}
+    </section>
+  `;
 }
 
 function renderAccountPage() {
   return `
-    <section class="route-grid route-grid-account">
-      <div class="route-stack">
+    <section class="route-stack">
+      <section class="broadcast-hero broadcast-hero-compact">
+        <div class="broadcast-copy">
+          <span class="panel-kicker">Profile & access</span>
+          <h2>One place for identity, league entry, and matchday rules.</h2>
+          <p>
+            Sign in, set your display name, join your league, and understand the scoring windows without seeing deployment instructions.
+          </p>
+          <div class="hero-actions">
+            <a class="btn" href="${buildRouteHref({ page: state.activeLeagueId ? "matches" : "account", section: "fixtures", matchId: getSelectedMatch()?.id })}">
+              ${state.activeLeagueId ? "Open fixtures" : "Stay here"}
+            </a>
+            <a class="ghost-btn" href="${buildRouteHref({ page: "standings" })}">View points table</a>
+          </div>
+        </div>
+        <div class="broadcast-scoreboard">
+          <div class="broadcast-scoreboard-head">
+            <span class="tag tag-scheduled">Account</span>
+            <span class="subtle">${escapeHtml(state.user ? "Signed in" : "Not signed in")}</span>
+          </div>
+          <strong class="broadcast-title">${escapeHtml(state.profile?.display_name || getUserIdentityLabel() || "Player profile")}</strong>
+          <div class="broadcast-detail-row">
+            <span class="chip"><strong>Leagues</strong>${escapeHtml(state.memberships.length || 0)}</span>
+            <span class="chip"><strong>Status</strong>${escapeHtml(state.user ? "Ready" : "Needs sign-in")}</span>
+            <span class="chip"><strong>Theme</strong>${escapeHtml(state.theme)}</span>
+          </div>
+        </div>
+      </section>
+      <div class="profile-route-grid">
+        <div class="profile-route-stack">
         ${renderAccountPanel()}
-        ${renderSetupPanel()}
+        ${renderPredictionWindowsPanel()}
       </div>
-      <div class="route-stack">
+      <div class="profile-route-stack">
         ${renderLeagueAccessPanel()}
         ${renderScoringPanel()}
+      </div>
       </div>
     </section>
   `;
@@ -1967,6 +2160,36 @@ function renderScoringPanel() {
         <div class="score-pill"><span>Bowler</span><strong>20 per wicket</strong></div>
         <div class="score-pill"><span>Exact total</span><strong>+10</strong></div>
         <div class="score-pill"><span>Winning team</span><strong>+50</strong></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderPredictionWindowsPanel() {
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h3>Prediction windows</h3>
+          <p>The game flow, without the clutter.</p>
+        </div>
+      </div>
+      <div class="rules-grid">
+        <div class="context-card">
+          <span class="panel-kicker">Phase 1</span>
+          <strong>Core picks</strong>
+          <p>One batsman, one bowler, one winner. These lock at 3.1 overs.</p>
+        </div>
+        <div class="context-card">
+          <span class="panel-kicker">Phase 2</span>
+          <strong>Exact total</strong>
+          <p>First-innings score calls stay open until 7.1 overs.</p>
+        </div>
+        <div class="context-card">
+          <span class="panel-kicker">Phase 3</span>
+          <strong>Settle & table</strong>
+          <p>Results land, points recalculate, and the league table updates.</p>
+        </div>
       </div>
     </section>
   `;
@@ -2064,7 +2287,7 @@ function renderAccountPanel() {
       <div class="section-head">
         <div>
           <h3>${isAuthenticated ? "Your account" : "Sign in"}</h3>
-          <p>${isAuthenticated ? "Update the name your friends will see on the board." : "Google sign-in is now the fastest path. Once you sign in on this browser, your leagues stay with you automatically."}</p>
+          <p>${isAuthenticated ? "Update the name your league sees and keep your identity clean across every matchday." : "Google sign-in is the fastest path. Sign in once and your leagues follow you automatically."}</p>
         </div>
       </div>
       ${
@@ -2096,7 +2319,7 @@ function renderAccountPanel() {
               <div class="form-grid auth-launch-panel">
                 <div class="field span-2">
                   <label>Welcome back</label>
-                  <p class="subtle">Use the Google account you want attached to your leagues. You only need the invite code once per league, and the app will remember that membership after login.</p>
+                  <p class="subtle">Use the Google account you want attached to your leagues. Join once with the invite code and come straight back into the same season later.</p>
                 </div>
                 <div class="field span-2 auth-actions">
                   <button class="btn" type="button" data-action="sign-in-google">Continue with Google</button>
@@ -2120,8 +2343,8 @@ function renderLeagueAccessPanel() {
           <h3>${state.memberships.length ? "Your leagues" : "Create or join a league"}</h3>
           <p>${
             state.memberships.length
-              ? "Your joined leagues stay saved on this device until the creator ends them."
-              : "One person creates the tournament. Everyone else joins once with the invite code."
+              ? "Every league you are part of stays available here, so switching seasons feels instant."
+              : "Create a league room or join one with a single invite code."
           }</p>
         </div>
       </div>
@@ -2152,7 +2375,7 @@ function renderLeagueAccessPanel() {
             <div>
               <span class="panel-kicker">Creator setup</span>
               <h4>Create league</h4>
-              <p>Open the room, sync the IPL calendar, and run the season from one dashboard.</p>
+              <p>Open the room, sync the season, and run the competition from the league hub.</p>
             </div>
           </div>
           <div class="form-grid">
@@ -2165,7 +2388,7 @@ function renderLeagueAccessPanel() {
               <input id="league-season" name="season" value="IPL 2026" required />
             </div>
             <div class="field span-2">
-              <small>You’ll become admin automatically, get the invite code instantly, and can sync the full fixture list right after creation.</small>
+              <small>You become admin instantly, get the invite code immediately, and can start the season flow right away.</small>
             </div>
             <div class="field span-2">
               <button class="btn" type="submit">Create league room</button>
@@ -2178,7 +2401,7 @@ function renderLeagueAccessPanel() {
             <div>
               <span class="panel-kicker">Player entry</span>
               <h4>Join league</h4>
-              <p>Use the invite code once. After that, this device keeps the league saved for you.</p>
+              <p>Use the invite code once. After that, the league stays attached to your account.</p>
             </div>
           </div>
           <div class="form-grid">
@@ -2187,7 +2410,7 @@ function renderLeagueAccessPanel() {
               <input id="invite-code" name="invite_code" placeholder="PLAYIPL" maxlength="12" required />
             </div>
             <div class="field span-2">
-              <small>You won’t need to keep re-entering the code every time you open the app. Join once, then come straight back to the league.</small>
+              <small>Join once, then come straight back into the same league from your profile.</small>
             </div>
             <div class="field">
               <label>&nbsp;</label>
