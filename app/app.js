@@ -30,6 +30,7 @@ const state = {
   settlingMatchIds: new Set(),
   lastPredictionConflictKey: null,
   teamSquads: {},
+  teamSquadRetryAfter: {},
   loadingTeamSquads: new Set(),
   pendingPhoneAuth: readPendingPhoneAuthState(),
   endingLeagueId: null,
@@ -41,6 +42,8 @@ const state = {
 
 const DEMO_USER_ID = "demo-user";
 const DEMO_LEAGUE_ID = "demo-league";
+const MIN_OFFICIAL_TEAM_SQUAD_SIZE = 11;
+const TEAM_SQUAD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
 const DEMO_MATCHES = [
   {
     id: "match-1",
@@ -3117,9 +3120,11 @@ async function ensureOfficialTeamSquadsForMatches(matches) {
     new Set(relevantMatches.flatMap((match) => [match.team_a, match.team_b])),
   ).filter((teamName) => {
     const teamKey = normalizeName(teamName);
+    const retryAfter = Number(state.teamSquadRetryAfter[teamKey] || 0);
     return (
       teamKey &&
       !Object.prototype.hasOwnProperty.call(state.teamSquads, teamKey) &&
+      Date.now() >= retryAfter &&
       !state.loadingTeamSquads.has(teamKey) &&
       Boolean(resolveOfficialTeamSlug(teamName))
     );
@@ -3146,12 +3151,14 @@ async function ensureOfficialTeamSquadsForMatches(matches) {
 
       if (result.status === "fulfilled") {
         state.teamSquads[teamKey] = result.value;
+        delete state.teamSquadRetryAfter[teamKey];
         needsRender = true;
         return;
       }
 
       console.warn(`Official team squad fetch failed for ${teamName}`, result.reason);
-      state.teamSquads[teamKey] = [];
+      delete state.teamSquads[teamKey];
+      state.teamSquadRetryAfter[teamKey] = Date.now() + TEAM_SQUAD_RETRY_COOLDOWN_MS;
       needsRender = true;
     });
   } finally {
@@ -3192,7 +3199,12 @@ async function fetchOfficialTeamSquad(teamName, seasonYear) {
     }
 
     const payload = await response.json();
-    return normalizePlayerList(payload?.players, teamName);
+    const players = normalizePlayerList(payload?.players, teamName);
+    if (players.length < MIN_OFFICIAL_TEAM_SQUAD_SIZE) {
+      throw new Error(`Official squad payload for ${teamName} only returned ${players.length} players.`);
+    }
+
+    return players;
   }
 
   const squadUrl = `https://www.iplt20.com/teams/${teamSlug}/squad/${seasonYear}`;
@@ -3207,7 +3219,12 @@ async function fetchOfficialTeamSquad(teamName, seasonYear) {
   }
 
   const html = await response.text();
-  return normalizePlayerList(parseOfficialTeamSquadHtml(html), teamName);
+  const players = normalizePlayerList(parseOfficialTeamSquadHtml(html), teamName);
+  if (players.length < MIN_OFFICIAL_TEAM_SQUAD_SIZE) {
+    throw new Error(`Official squad page for ${teamName} only returned ${players.length} players.`);
+  }
+
+  return players;
 }
 
 function parseOfficialTeamSquadHtml(source) {
