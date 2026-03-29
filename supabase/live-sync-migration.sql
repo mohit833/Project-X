@@ -1,3 +1,67 @@
+create or replace function public.normalize_pick(p_value text)
+returns text
+language sql
+immutable
+as $$
+  with cleaned as (
+    select trim(
+      both '-'
+      from regexp_replace(
+        regexp_replace(
+          regexp_replace(lower(coalesce(p_value, '')), '\([^)]*\)', ' ', 'g'),
+          '[+*]',
+          ' ',
+          'g'
+        ),
+        '[^a-z0-9]+',
+        '-',
+        'g'
+      )
+    ) as slug
+  )
+  select trim(
+    both '-'
+    from regexp_replace(slug, '(-(?:c|cs|ip|rp|sub|vc|wk))+$', '', 'g')
+  )
+  from cleaned;
+$$;
+
+create or replace function public.normalize_score_map(p_score_map jsonb)
+returns jsonb
+language sql
+immutable
+as $$
+  select coalesce(
+    jsonb_object_agg(normalized_key, max_value),
+    '{}'::jsonb
+  )
+  from (
+    select
+      public.normalize_pick(score_entry.key) as normalized_key,
+      max(score_entry.value::integer) as max_value
+    from jsonb_each_text(coalesce(p_score_map, '{}'::jsonb)) as score_entry(key, value)
+    where score_entry.value ~ '^-?\d+$'
+    group by public.normalize_pick(score_entry.key)
+  ) normalized_entries
+  where normalized_key <> '';
+$$;
+
+create or replace function public.score_map_lookup(p_score_map jsonb, p_player_name text)
+returns integer
+language sql
+immutable
+as $$
+  select coalesce(
+    (
+      select max(score_entry.value::integer)
+      from jsonb_each_text(coalesce(p_score_map, '{}'::jsonb)) as score_entry(key, value)
+      where score_entry.value ~ '^-?\d+$'
+        and public.normalize_pick(score_entry.key) = public.normalize_pick(p_player_name)
+    ),
+    0
+  );
+$$;
+
 create or replace function public.generate_invite_code()
 returns text
 language plpgsql
@@ -149,8 +213,8 @@ begin
       from public.predictions
       where match_id = p_match_id
         and user_id <> v_uid
-        and batsman_key = public.normalize_pick(v_batsman)
-        and bowler_key = public.normalize_pick(v_bowler)
+        and public.normalize_pick(batsman_name) = public.normalize_pick(v_batsman)
+        and public.normalize_pick(bowler_name) = public.normalize_pick(v_bowler)
     ) then
       raise exception 'That batsman-bowler combination has already been taken.';
     end if;
@@ -272,6 +336,87 @@ $$;
 
 grant execute on function public.end_league(uuid) to authenticated;
 
+create or replace function public.save_match_result(
+  p_match_id uuid,
+  p_winner_team text,
+  p_first_innings_total integer,
+  p_batsman_runs jsonb default '{}'::jsonb,
+  p_bowler_wickets jsonb default '{}'::jsonb,
+  p_notes text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_match public.matches%rowtype;
+  v_winner text := trim(coalesce(p_winner_team, ''));
+begin
+  if v_uid is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  select *
+  into v_match
+  from public.matches
+  where id = p_match_id;
+
+  if v_match.id is null then
+    raise exception 'Match not found.';
+  end if;
+
+  if not public.is_league_admin(v_match.league_id) then
+    raise exception 'Only admins can save match results.';
+  end if;
+
+  if lower(v_winner) = lower(v_match.team_a) then
+    v_winner := v_match.team_a;
+  elsif lower(v_winner) = lower(v_match.team_b) then
+    v_winner := v_match.team_b;
+  else
+    raise exception 'Winner must match one of the teams in this fixture.';
+  end if;
+
+  insert into public.match_results (
+    match_id,
+    winner_team,
+    first_innings_total,
+    batsman_runs,
+    bowler_wickets,
+    notes,
+    settled_by,
+    settled_at
+  )
+  values (
+    p_match_id,
+    v_winner,
+    p_first_innings_total,
+    public.normalize_score_map(p_batsman_runs),
+    public.normalize_score_map(p_bowler_wickets),
+    nullif(trim(coalesce(p_notes, '')), ''),
+    v_uid,
+    timezone('utc', now())
+  )
+  on conflict (match_id)
+  do update
+    set winner_team = excluded.winner_team,
+        first_innings_total = excluded.first_innings_total,
+        batsman_runs = excluded.batsman_runs,
+        bowler_wickets = excluded.bowler_wickets,
+        notes = excluded.notes,
+        settled_by = excluded.settled_by,
+        settled_at = timezone('utc', now());
+
+  update public.matches
+  set status = 'completed'
+  where id = p_match_id;
+end;
+$$;
+
+grant execute on function public.save_match_result(uuid, text, integer, jsonb, jsonb, text) to authenticated;
+
 create or replace view public.prediction_points
 with (security_invoker = true)
 as
@@ -282,8 +427,8 @@ with scored_predictions as (
     p.match_id,
     p.member_id,
     p.user_id,
-    coalesce((mr.batsman_runs ->> p.batsman_key)::integer, 0) as batsman_points,
-    coalesce((mr.bowler_wickets ->> p.bowler_key)::integer, 0) * 20 as bowler_points,
+    public.score_map_lookup(mr.batsman_runs, p.batsman_name) as batsman_points,
+    public.score_map_lookup(mr.bowler_wickets, p.bowler_name) * 20 as bowler_points,
     case
       when mr.winner_team is not null and lower(mr.winner_team) = lower(coalesce(p.team_pick, '')) then 50
       else 0

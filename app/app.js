@@ -681,7 +681,7 @@ async function loadLeagueBundle() {
 
   const leagueId = state.activeLeagueId;
 
-  const [matchesResult, membersResult, predictionsResult, leaderboardResult] =
+  const [matchesResult, membersResult, predictionsResult] =
     await Promise.all([
       state.client
         .from("matches")
@@ -701,12 +701,6 @@ async function loadLeagueBundle() {
         )
         .eq("league_id", leagueId)
         .order("created_at", { ascending: true }),
-      state.client
-        .from("league_leaderboard")
-        .select("*")
-        .eq("league_id", leagueId)
-        .order("total_points", { ascending: false })
-        .order("display_name", { ascending: true }),
     ]);
 
   if (matchesResult.error) {
@@ -721,14 +715,14 @@ async function loadLeagueBundle() {
     throw predictionsResult.error;
   }
 
-  if (leaderboardResult.error) {
-    throw leaderboardResult.error;
-  }
-
   state.matches = (matchesResult.data || []).map((match) => normalizeMatchRecord(match));
   state.members = membersResult.data || [];
   state.predictions = predictionsResult.data || [];
-  state.leaderboard = leaderboardResult.data || [];
+  state.leaderboard = buildLeaderboardFromMatches(
+    state.members,
+    state.predictions,
+    state.matches,
+  );
 
   if (!state.matches.length) {
     teardownRealtime();
@@ -2776,12 +2770,17 @@ async function withButtonPending(button, label, task) {
   }
 }
 
-function normalizeMatchResultRelation(value) {
-  if (Array.isArray(value)) {
-    return value[0] || null;
+function normalizeMatchResultRelation(value, match = null) {
+  const relation = Array.isArray(value) ? value[0] || null : value;
+  if (!relation || typeof relation !== "object") {
+    return null;
   }
 
-  return value && typeof value === "object" ? value : null;
+  return {
+    ...relation,
+    batsman_runs: normalizeResultScoreMap(relation.batsman_runs, match),
+    bowler_wickets: normalizeResultScoreMap(relation.bowler_wickets, match),
+  };
 }
 
 function normalizeMatchRecord(match) {
@@ -2791,12 +2790,12 @@ function normalizeMatchRecord(match) {
 
   return {
     ...match,
-    match_results: normalizeMatchResultRelation(match.match_results),
+    match_results: normalizeMatchResultRelation(match.match_results, match),
   };
 }
 
 function getMatchResult(match) {
-  return normalizeMatchResultRelation(match?.match_results);
+  return normalizeMatchResultRelation(match?.match_results, match);
 }
 
 function getActiveLeague() {
@@ -5269,6 +5268,26 @@ function parseScoreLines(rawText, match) {
   }
 
   return payload;
+}
+
+function normalizeResultScoreMap(scoreMap, match) {
+  if (!scoreMap || typeof scoreMap !== "object") {
+    return {};
+  }
+
+  const normalized = {};
+
+  for (const [playerName, rawValue] of Object.entries(scoreMap)) {
+    const key = resolvePlayerCanonicalKey(playerName, match);
+    const value = Number(rawValue);
+    if (!key || !Number.isFinite(value)) {
+      continue;
+    }
+
+    normalized[key] = Math.max(normalized[key] || 0, value);
+  }
+
+  return normalized;
 }
 
 function getPlayerStatValue(statMap, playerName, match) {
