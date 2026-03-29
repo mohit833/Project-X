@@ -57,7 +57,6 @@ declare
   v_match public.matches%rowtype;
   v_member public.league_members%rowtype;
   v_league_status text;
-  v_is_admin boolean := false;
   v_prediction public.predictions%rowtype;
   v_prediction_id uuid;
   v_wants_core boolean;
@@ -101,7 +100,6 @@ begin
     raise exception 'This league has already ended.';
   end if;
 
-  v_is_admin := v_member.role = 'admin';
   v_wants_core := v_batsman is not null or v_bowler is not null or v_team_pick is not null;
 
   if v_wants_core and (v_batsman is null or v_bowler is null or v_team_pick is null) then
@@ -142,7 +140,7 @@ begin
       raise exception 'Batsman and bowler must be two different players.';
     end if;
 
-    if not v_is_admin and v_core_locked then
+    if v_core_locked then
       raise exception 'Core picks are locked after the 3.1 over cutoff.';
     end if;
 
@@ -163,8 +161,7 @@ begin
       raise exception 'Predicted score must be zero or higher.';
     end if;
 
-    if (not v_is_admin and (not v_score_window_open or v_score_locked))
-      and (v_prediction.id is null or v_prediction.predicted_score is distinct from p_predicted_score) then
+    if not v_score_window_open or v_score_locked then
       if v_score_locked then
         raise exception 'Score prediction is locked after the 7.1 over cutoff.';
       end if;
@@ -210,7 +207,6 @@ begin
       case when p_predicted_score is not null then v_now else null end,
       case
         when v_wants_core
-          and not v_is_admin
           and (v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at)
           then true
         else false
@@ -228,8 +224,7 @@ begin
         core_locked_due_to_pre_xi = case
           when v_wants_core then
             (
-              not v_is_admin
-              and (v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at)
+              v_match.playing_xi_announced_at is null or v_now < v_match.playing_xi_announced_at
             )
           else core_locked_due_to_pre_xi
         end

@@ -1361,6 +1361,8 @@ function renderMatchCard(match) {
   const active = match.id === getSelectedMatch()?.id;
   const entries = getPredictionsForMatch(match.id);
   const liveWindow = getLiveWindowState(match, getCurrentUserPrediction(match.id));
+  const teamAShort = getTeamShortCode(match.team_a);
+  const teamBShort = getTeamShortCode(match.team_b);
   const availabilityLabel = liveWindow.coreWindowOpen
     ? "Player picks open"
     : liveWindow.scoreWindowOpen
@@ -1371,17 +1373,33 @@ function renderMatchCard(match) {
 
   return `
     <button class="match-card ${active ? "active" : ""}" type="button" data-action="select-match" data-match-id="${match.id}">
+      <div class="match-card-glow"></div>
       <div class="match-card-head">
         <span class="tag tag-${status}">${labelizeStatus(status)}</span>
         <span class="subtle">${escapeHtml(formatDate(match.starts_at))}</span>
       </div>
       <h4>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h4>
-      <div class="match-versus">
-        <span>${escapeHtml(match.team_a)}</span>
-        <span class="versus-dot">vs</span>
-        <span>${escapeHtml(match.team_b)}</span>
+      <div class="fixture-teams">
+        <div class="team-token">
+          <span class="team-badge">${escapeHtml(teamAShort)}</span>
+          <div class="team-token-meta">
+            <strong>${escapeHtml(match.team_a)}</strong>
+            <span>${escapeHtml(teamAShort)}</span>
+          </div>
+        </div>
+        <span class="versus-dot">VS</span>
+        <div class="team-token team-token-away">
+          <span class="team-badge">${escapeHtml(teamBShort)}</span>
+          <div class="team-token-meta">
+            <strong>${escapeHtml(match.team_b)}</strong>
+            <span>${escapeHtml(teamBShort)}</span>
+          </div>
+        </div>
       </div>
-      <p class="subtle">${escapeHtml(match.venue || "Venue TBD")}</p>
+      <div class="match-card-meta">
+        <span class="chip"><strong>Venue</strong>${escapeHtml(match.venue || "Venue TBD")}</span>
+        <span class="chip"><strong>Window</strong>${escapeHtml(availabilityLabel)}</span>
+      </div>
       <div class="match-card-footer">
         <span class="chip"><strong>${entries.length}</strong>Picks posted</span>
         <span class="chip"><strong>${escapeHtml(availabilityLabel)}</strong>Live state</span>
@@ -1401,12 +1419,10 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
   const batsmanOptions = getSelectablePlayers(match, "batsman", prediction);
   const bowlerOptions = getSelectablePlayers(match, "bowler", prediction);
   const syncSummary = getMatchSyncSummary(match);
-  const canEditCore = !leagueEnded && (isAdmin || liveWindow.coreWindowOpen);
-  const canEditScore = !leagueEnded && (isAdmin || liveWindow.scoreWindowOpen);
-  const adminOverrideActive =
-    !leagueEnded &&
-    isAdmin &&
-    (!liveWindow.coreWindowOpen || !liveWindow.scoreWindowOpen);
+  const canEditCore = !leagueEnded && liveWindow.coreWindowOpen;
+  const canEditScore = !leagueEnded && liveWindow.scoreWindowOpen;
+  const teamAShort = getTeamShortCode(match.team_a);
+  const teamBShort = getTeamShortCode(match.team_b);
   const windowMessage = leagueEnded
     ? "This league has ended. Picks stay visible, but no more changes can be made."
     : liveWindow.coreWindowOpen
@@ -1414,9 +1430,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
       : liveWindow.scoreWindowOpen
         ? "Player picks are locked. Exact first-innings score is open until 7.1 overs."
         : "All standard prediction windows are locked for this match.";
-  const predictionMessage = adminOverrideActive
-    ? `${windowMessage} Admin override is active for you, but duplicate batsman-bowler combinations and score picks are still blocked.`
-    : windowMessage;
+  const predictionMessage = windowMessage;
   const coreButtonLabel = leagueEnded
     ? "League ended"
     : !hasSquad
@@ -1424,43 +1438,66 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
       ? "Loading official team squads"
       : "Waiting for official team squads"
     : canEditCore
-      ? adminOverrideActive && !liveWindow.coreWindowOpen
-        ? "Save player picks (admin override)"
-        : "Save player picks"
+      ? "Save player picks"
       : "Player picks locked";
   const scoreButtonLabel = leagueEnded
     ? "League ended"
     : canEditScore
-    ? adminOverrideActive && !liveWindow.scoreWindowOpen
-      ? "Save score prediction (admin override)"
-      : "Save score prediction"
+    ? "Save score prediction"
     : liveWindow.scoreLocked
       ? "Score locked"
       : "Score opens after 3.1 overs";
 
   return `
-    <section class="panel">
-      <div class="section-head">
-        <div>
-          <span class="panel-kicker">Selected match room</span>
+    <section class="panel arena-panel">
+      <div class="arena-board">
+        <div class="arena-team">
+          <span class="arena-team-badge">${escapeHtml(teamAShort)}</span>
+          <div>
+            <span class="panel-kicker">Home call</span>
+            <strong>${escapeHtml(match.team_a)}</strong>
+          </div>
+        </div>
+        <div class="arena-centre">
+          <span class="tag tag-${status}">${labelizeStatus(status)}</span>
           <h3>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h3>
           <p>${escapeHtml(match.venue || "Venue TBD")} · ${escapeHtml(formatDate(match.starts_at))}</p>
+          <div class="arena-meta-grid">
+            <span class="chip"><strong>Clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
+            <span class="chip"><strong>Core</strong>${escapeHtml(formatCoreLockLabel(match, liveWindow))}</span>
+            <span class="chip"><strong>Score</strong>${escapeHtml(formatScoreLockLabel(match, liveWindow))}</span>
+          </div>
         </div>
-        <span class="tag tag-${status}">${labelizeStatus(status)}</span>
+        <div class="arena-team arena-team-away">
+          <span class="arena-team-badge">${escapeHtml(teamBShort)}</span>
+          <div>
+            <span class="panel-kicker">Away call</span>
+            <strong>${escapeHtml(match.team_b)}</strong>
+          </div>
+        </div>
       </div>
 
-      <div class="chip-list">
-        <span class="chip"><strong>Data source</strong>${escapeHtml(syncSummary.source)}</span>
-        <span class="chip"><strong>Squads</strong>${escapeHtml(syncSummary.playingXiLabel)}</span>
-        <span class="chip"><strong>Core picks</strong>${escapeHtml(formatCoreLockLabel(match, liveWindow))}</span>
-        <span class="chip"><strong>Score lock</strong>${escapeHtml(formatScoreLockLabel(match, liveWindow))}</span>
-        <span class="chip"><strong>Live clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
-        <span class="chip"><strong>Last sync</strong>${escapeHtml(syncSummary.lastSynced)}</span>
+      <div class="lock-strip">
+        <div class="lock-strip-card ${liveWindow.coreWindowOpen ? "is-live" : liveWindow.coreLocked ? "is-locked" : ""}">
+          <span>Player picks</span>
+          <strong>${liveWindow.coreLocked ? "Closed at 3.1" : "Open now"}</strong>
+          <p>One batsman, one bowler, one winner. Same batsman-bowler pair cannot repeat.</p>
+        </div>
+        <div class="lock-strip-card ${liveWindow.scoreWindowOpen ? "is-live" : liveWindow.scoreLocked ? "is-locked" : ""}">
+          <span>Score window</span>
+          <strong>${liveWindow.scoreWindowOpen ? "3.1 to 7.1 live" : liveWindow.scoreLocked ? "Locked at 7.1" : "Opens after 3.1"}</strong>
+          <p>Only one score per member. If nobody is exact, the single nearest score wins.</p>
+        </div>
+        <div class="lock-strip-card">
+          <span>Feed engine</span>
+          <strong>${escapeHtml(syncSummary.source)}</strong>
+          <p>Official IPL squads, live innings clock, and automatic settlement when scorecards land.</p>
+        </div>
       </div>
 
       ${
         match.notes
-          ? `<p class="footnote">${escapeHtml(match.notes)}</p>`
+          ? `<p class="footnote arena-note">${escapeHtml(match.notes)}</p>`
           : ""
       }
       ${
@@ -1469,93 +1506,108 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           : ""
       }
 
-      <div class="grid-2">
-        <div class="panel">
+      <div class="grid-2 match-room-grid">
+        <div class="panel entry-shell">
           <div id="prediction-panel" class="prediction-anchor"></div>
           <div class="section-head">
             <div>
               <span class="panel-kicker">Your entry</span>
-              <h4>Your prediction</h4>
+              <h4>Prediction desk</h4>
               <p>${predictionMessage}</p>
             </div>
           </div>
-          ${
-            adminOverrideActive
-              ? `<div class="notice notice-info">Admin override is active for timing locks on this match. Uniqueness rules still apply to you like everyone else.</div>`
-              : ""
-          }
           ${
             state.demoMode
               ? `<div class="notice notice-info">Demo mode is read-only. Configure Supabase to save real entries.</div>`
               : !state.user
                 ? `<div class="empty-state">Sign in to submit picks.</div>`
                 : `
-                  <form class="form-grid" id="core-prediction-form">
-                    <input type="hidden" name="match_id" value="${match.id}" />
-                    <div class="field">
-                      <label for="batsman-name">Batsman</label>
-                      <select id="batsman-name" name="batsman_name" ${!canEditCore || !hasSquad ? "disabled" : ""}>
-                        ${renderPlayerSelectOptions("Choose batsman", batsmanOptions, prediction?.batsman_name)}
-                      </select>
+                  <div class="entry-stage-card">
+                    <div class="entry-stage-head">
+                      <div>
+                        <span class="panel-kicker">Phase one</span>
+                        <h5>Player picks + match winner</h5>
+                      </div>
+                      <span class="tag ${canEditCore ? "tag-live" : "tag-locked"}">${canEditCore ? "Open" : "Locked"}</span>
                     </div>
-                    <div class="field">
-                      <label for="bowler-name">Bowler</label>
-                      <select id="bowler-name" name="bowler_name" ${!canEditCore || !hasSquad ? "disabled" : ""}>
-                        ${renderPlayerSelectOptions("Choose bowler", bowlerOptions, prediction?.bowler_name)}
-                      </select>
+                    <form class="form-grid" id="core-prediction-form">
+                      <input type="hidden" name="match_id" value="${match.id}" />
+                      <div class="field">
+                        <label for="batsman-name">Batsman</label>
+                        <select id="batsman-name" name="batsman_name" ${!canEditCore || !hasSquad ? "disabled" : ""}>
+                          ${renderPlayerSelectOptions("Choose batsman", batsmanOptions, prediction?.batsman_name)}
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label for="bowler-name">Bowler</label>
+                        <select id="bowler-name" name="bowler_name" ${!canEditCore || !hasSquad ? "disabled" : ""}>
+                          ${renderPlayerSelectOptions("Choose bowler", bowlerOptions, prediction?.bowler_name)}
+                        </select>
+                      </div>
+                      <div class="field span-2">
+                        <label for="team-pick">Winning team</label>
+                        <select id="team-pick" name="team_pick" ${!canEditCore ? "disabled" : ""}>
+                          <option value="">Choose a winner</option>
+                          <option value="${escapeAttribute(match.team_a)}" ${
+                            prediction?.team_pick === match.team_a ? "selected" : ""
+                          }>${escapeHtml(match.team_a)}</option>
+                          <option value="${escapeAttribute(match.team_b)}" ${
+                            prediction?.team_pick === match.team_b ? "selected" : ""
+                          }>${escapeHtml(match.team_b)}</option>
+                        </select>
+                      </div>
+                      <div class="field span-2">
+                        <small>
+                          ${
+                            hasSquad
+                              ? "Pick from the official IPL team squads. Batsman includes batters and all-rounders; bowler includes bowlers and all-rounders. Final points come only from the actual match scorecard, so a locked pick stays at 0 if that player does not appear in the XI / scorecard."
+                              : squadsLoading
+                                ? "Loading the official IPL team squads for both teams. The dropdowns will populate as soon as those roster pages are fetched."
+                                : "Official IPL team squads are not available yet for this fixture."
+                          }
+                        </small>
+                      </div>
+                      <div class="field span-2">
+                        <button class="btn" type="submit" ${!canEditCore || !hasSquad ? "disabled" : ""}>${coreButtonLabel}</button>
+                      </div>
+                    </form>
+                  </div>
+                  <div class="entry-stage-card score-stage-card">
+                    <div class="entry-stage-head">
+                      <div>
+                        <span class="panel-kicker">Phase two</span>
+                        <h5>1st innings total</h5>
+                      </div>
+                      <span class="tag ${canEditScore ? "tag-live" : liveWindow.scoreLocked ? "tag-locked" : "tag-scheduled"}">${
+                        canEditScore ? "Open" : liveWindow.scoreLocked ? "Locked" : "Waiting"
+                      }</span>
                     </div>
-                    <div class="field">
-                      <label for="team-pick">Winning team</label>
-                      <select id="team-pick" name="team_pick" ${!canEditCore ? "disabled" : ""}>
-                        <option value="">Choose a winner</option>
-                        <option value="${escapeAttribute(match.team_a)}" ${
-                          prediction?.team_pick === match.team_a ? "selected" : ""
-                        }>${escapeHtml(match.team_a)}</option>
-                        <option value="${escapeAttribute(match.team_b)}" ${
-                          prediction?.team_pick === match.team_b ? "selected" : ""
-                        }>${escapeHtml(match.team_b)}</option>
-                      </select>
-                    </div>
-                    <div class="field span-2">
-                      <small>
-                        ${
-                          hasSquad
-                            ? "Pick from the official IPL team squads. Batsman includes batters and all-rounders; bowler includes bowlers and all-rounders. Final points come only from the actual match scorecard, so a locked pick stays at 0 if that player does not appear in the XI / scorecard."
-                            : squadsLoading
-                              ? "Loading the official IPL team squads for both teams. The dropdowns will populate as soon as those roster pages are fetched."
-                              : "Official IPL team squads are not available yet for this fixture."
-                        }
-                      </small>
-                    </div>
-                    <div class="field span-2">
-                      <button class="btn" type="submit" ${!canEditCore || !hasSquad ? "disabled" : ""}>${coreButtonLabel}</button>
-                    </div>
-                  </form>
-                  <form class="form-grid" id="score-prediction-form" style="margin-top: 1rem;">
-                    <input type="hidden" name="match_id" value="${match.id}" />
-                    <div class="field">
-                      <label for="predicted-score">1st innings total</label>
-                      <input
-                        id="predicted-score"
-                        type="text"
-                        name="predicted_score"
-                        inputmode="numeric"
-                        pattern="[0-9]*"
-                        maxlength="3"
-                        placeholder="182"
-                        value="${escapeAttribute(prediction?.predicted_score ?? "")}"
-                        ${!canEditScore ? "disabled" : ""}
-                      />
-                    </div>
-                    <div class="field span-2">
-                      <small>
-                        Exact score prediction opens right after 3.1 overs and locks at 7.1 overs. Only numbers are allowed. If nobody hits the exact total, the single nearest score gets the points.
-                      </small>
-                    </div>
-                    <div class="field span-2">
-                      <button class="ghost-btn" type="submit" ${!canEditScore ? "disabled" : ""}>${scoreButtonLabel}</button>
-                    </div>
-                  </form>
+                    <form class="form-grid" id="score-prediction-form">
+                      <input type="hidden" name="match_id" value="${match.id}" />
+                      <div class="field span-2">
+                        <label for="predicted-score">1st innings total</label>
+                        <input
+                          id="predicted-score"
+                          type="text"
+                          name="predicted_score"
+                          inputmode="numeric"
+                          pattern="[0-9]*"
+                          maxlength="3"
+                          placeholder="182"
+                          value="${escapeAttribute(prediction?.predicted_score ?? "")}"
+                          ${!canEditScore ? "disabled" : ""}
+                        />
+                      </div>
+                      <div class="field span-2">
+                        <small>
+                          Exact score prediction opens right after 3.1 overs and locks at 7.1 overs. Only numbers are allowed. If nobody hits the exact total, the single nearest score gets the points.
+                        </small>
+                      </div>
+                      <div class="field span-2">
+                        <button class="ghost-btn" type="submit" ${!canEditScore ? "disabled" : ""}>${scoreButtonLabel}</button>
+                      </div>
+                    </form>
+                  </div>
                 `
           }
           ${
@@ -1613,12 +1665,12 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           }
         </div>
 
-        <div class="panel">
+        <div class="panel prediction-board">
           <div class="section-head">
             <div>
               <span class="panel-kicker">Locked by others</span>
               <h4>Taken picks</h4>
-              <p>Use this board to avoid duplicated combinations and already-claimed score calls.</p>
+              <p>Watch claimed pairs and score calls live so no one wastes time on taken slots.</p>
             </div>
           </div>
           ${
@@ -1633,34 +1685,37 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
         </div>
       </div>
 
-      <div class="grid-2">
-        <div class="panel">
+      <div class="grid-2 roster-engine-grid">
+        <div class="panel roster-panel">
           <div class="section-head">
             <div>
               <span class="panel-kicker">Selection pool</span>
-              <h4>Team squads</h4>
+              <h4>Official squads</h4>
               <p>${hasSquad ? "Player picks use the official IPL season squads. The live scorecard decides the actual points." : squadsLoading ? "Official IPL team rosters are loading now." : "Official IPL team rosters are not available yet for this fixture."}</p>
             </div>
           </div>
           ${
             hasSquad
-              ? squadGroups
+              ? `<div class="roster-grid">${squadGroups
                   .map(
                     (group) => `
-                      <div class="team-block">
-                        <strong>${escapeHtml(group.teamName)}</strong>
-                        <div class="chip-list">
-                          ${group.players.map((player) => `<span class="chip">${escapeHtml(player.name)}</span>`).join("")}
+                      <div class="team-block roster-card">
+                        <div class="roster-card-head">
+                          <span class="arena-team-badge">${escapeHtml(getTeamShortCode(group.teamName))}</span>
+                          <strong>${escapeHtml(group.teamName)}</strong>
+                        </div>
+                        <div class="chip-list roster-chip-list">
+                          ${group.players.map((player) => `<span class="chip roster-pill">${escapeHtml(player.name)}</span>`).join("")}
                         </div>
                       </div>
                     `,
                   )
-                  .join("")
+                  .join("")}</div>`
               : `<div class="empty-state">${squadsLoading ? "Fetching the official IPL squads for these two teams." : "Once the official IPL team rosters are available, the player dropdowns will fill automatically."}</div>`
           }
         </div>
 
-        <div class="panel">
+        <div class="panel engine-panel">
           <div class="section-head">
             <div>
               <span class="panel-kicker">Live match engine</span>
@@ -1675,7 +1730,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
             <span class="chip"><strong>First innings clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
           </div>
           <p class="footnote">
-            The 3.1 and 7.1 over locks use the provider's first-innings ball count whenever it is available. If the live feed lags, the admin can still override the current match clock below.
+            The 3.1 and 7.1 over locks use the provider's first-innings ball count whenever it is available. Creator controls below can correct the shared match engine, but prediction locks still apply to everyone once they close.
           </p>
         </div>
       </div>
@@ -1683,7 +1738,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
       ${
         scoreResult
           ? `
-            <div class="panel">
+            <div class="panel result-ribbon">
               <div class="section-head">
                 <div>
                   <span class="panel-kicker">Result archive</span>
@@ -1716,9 +1771,12 @@ function renderPredictionRow(entry) {
   const sameUser = entry.user_id === state.user?.id;
 
   return `
-    <div class="entry-item">
+    <div class="entry-item prediction-row ${sameUser ? "current-user" : ""}">
       <div>
-        <strong>${escapeHtml(entry.league_members?.display_name || "Player")}</strong>
+        <div class="prediction-row-head">
+          <strong>${escapeHtml(entry.league_members?.display_name || "Player")}</strong>
+          ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
+        </div>
         <div class="entry-meta">
           <span class="subtle">Pair: ${escapeHtml(entry.batsman_name || "-")} + ${escapeHtml(entry.bowler_name || "-")}</span>
         </div>
@@ -1727,7 +1785,6 @@ function renderPredictionRow(entry) {
         <strong>${escapeHtml(entry.predicted_score ?? "-")}</strong>
         <div class="entry-meta">
           <span class="subtle">${escapeHtml(entry.team_pick || "-")} · score call</span>
-          ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
         </div>
       </div>
     </div>
@@ -2135,6 +2192,7 @@ async function savePrediction(form) {
   const formData = new FormData(form);
   const matchId = String(formData.get("match_id") || "");
   const match = state.matches.find((entry) => entry.id === matchId) || null;
+  const liveWindow = getLiveWindowState(match, getCurrentUserPrediction(matchId));
   const batsmanName = cleanNullableText(formData.get("batsman_name"), 80);
   const bowlerName = cleanNullableText(formData.get("bowler_name"), 80);
   const teamPick = cleanNullableText(formData.get("team_pick"), 80);
@@ -2143,6 +2201,14 @@ async function savePrediction(form) {
   const hasCoreValue = [batsmanName, bowlerName, teamPick].some(Boolean);
   if (hasCoreValue && [batsmanName, bowlerName, teamPick].some((value) => !value)) {
     throw new Error("Submit batsman, bowler, and winning team together.");
+  }
+
+  if (match && computeMatchStatus(match) === "completed") {
+    throw new Error("This match is already completed.");
+  }
+
+  if (hasCoreValue && !liveWindow.coreWindowOpen) {
+    throw new Error("Player picks are locked after the 3.1 over cutoff.");
   }
 
   if (
@@ -2158,6 +2224,15 @@ async function savePrediction(form) {
   }
   const predictedScore =
     predictedScoreRaw === "" ? null : Number.parseInt(predictedScoreRaw, 10);
+
+  if (predictedScore !== null && !liveWindow.scoreWindowOpen) {
+    throw new Error(
+      liveWindow.scoreLocked
+        ? "Score prediction is locked after the 7.1 over cutoff."
+        : "Score prediction opens after the 3.1 over cutoff.",
+    );
+  }
+
   const conflict = findPredictionConflict(matchId, {
     batsman_name: batsmanName,
     bowler_name: bowlerName,
@@ -2501,6 +2576,34 @@ function handleInput(event) {
 
 function getUserIdentityLabel() {
   return state.user?.phone || state.user?.email || "";
+}
+
+function getTeamShortCode(teamName) {
+  const normalized = slugify(teamName || "");
+  const preset = {
+    "chennai-super-kings": "CSK",
+    "delhi-capitals": "DC",
+    "gujarat-titans": "GT",
+    "kolkata-knight-riders": "KKR",
+    "lucknow-super-giants": "LSG",
+    "mumbai-indians": "MI",
+    "punjab-kings": "PBKS",
+    "rajasthan-royals": "RR",
+    "royal-challengers-bengaluru": "RCB",
+    "sunrisers-hyderabad": "SRH",
+  }[normalized];
+
+  if (preset) {
+    return preset;
+  }
+
+  return String(teamName || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 4)
+    .toUpperCase();
 }
 
 function maskPhoneNumber(phone) {
