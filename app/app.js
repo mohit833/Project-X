@@ -3908,6 +3908,27 @@ function shouldAttemptPlayingXiSync(fixture) {
 }
 
 async function settleSyncedMatchIfReady(match, snapshot, { throwWhenUnavailable = false } = {}) {
+  const scorecard =
+    snapshot?.official_scorecard_bundle || (await fetchMatchScorecard(snapshot.external_match_id));
+  const settlement = extractSettlementPayload(scorecard, match, snapshot);
+
+  if (settlement) {
+    const { error } = await state.client.rpc("save_match_result", {
+      p_match_id: match.id,
+      p_winner_team: settlement.winner_team,
+      p_first_innings_total: settlement.first_innings_total,
+      p_batsman_runs: settlement.batsman_runs,
+      p_bowler_wickets: settlement.bowler_wickets,
+      p_notes: settlement.notes,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    return true;
+  }
+
   if (computeProviderMatchStatus(snapshot) !== "completed") {
     if (throwWhenUnavailable) {
       throw new Error("Official result is not ready yet for this match.");
@@ -3916,31 +3937,11 @@ async function settleSyncedMatchIfReady(match, snapshot, { throwWhenUnavailable 
     return false;
   }
 
-  const scorecard =
-    snapshot?.official_scorecard_bundle || (await fetchMatchScorecard(snapshot.external_match_id));
-  const settlement = extractSettlementPayload(scorecard, match, snapshot);
-  if (!settlement) {
-    if (throwWhenUnavailable) {
-      throw new Error("Official IPL scorecard is available, but point extraction is still incomplete.");
-    }
-
-    return false;
+  if (throwWhenUnavailable) {
+    throw new Error("Official IPL scorecard is available, but point extraction is still incomplete.");
   }
 
-  const { error } = await state.client.rpc("save_match_result", {
-    p_match_id: match.id,
-    p_winner_team: settlement.winner_team,
-    p_first_innings_total: settlement.first_innings_total,
-    p_batsman_runs: settlement.batsman_runs,
-    p_bowler_wickets: settlement.bowler_wickets,
-    p_notes: settlement.notes,
-  });
-
-  if (error) {
-    throw error;
-  }
-
-  return true;
+  return false;
 }
 
 async function calculateMatchPointsFromProvider(match) {
