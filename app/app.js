@@ -27,6 +27,7 @@ const state = {
   providerFixtures: [],
   loadingProviderFixtures: false,
   syncingMatchIds: new Set(),
+  settlingMatchIds: new Set(),
   lastPredictionConflictKey: null,
   teamSquads: {},
   loadingTeamSquads: new Set(),
@@ -518,6 +519,7 @@ function clearAuthCallbackParams(url) {
 }
 
 function loadDemoState() {
+  const demoMatches = DEMO_MATCHES.map((match) => normalizeMatchRecord(match));
   state.session = {
     user: { id: DEMO_USER_ID, email: "demo@league.local" },
   };
@@ -542,13 +544,13 @@ function loadDemoState() {
     },
   ];
   state.activeLeagueId = DEMO_LEAGUE_ID;
-  state.matches = DEMO_MATCHES;
+  state.matches = demoMatches;
   state.members = DEMO_MEMBERS;
   state.predictions = DEMO_PREDICTIONS;
   state.leaderboard = buildLeaderboardFromMatches(
     DEMO_MEMBERS,
     DEMO_PREDICTIONS,
-    DEMO_MATCHES,
+    demoMatches,
   );
 }
 
@@ -688,7 +690,7 @@ async function loadLeagueBundle() {
     throw leaderboardResult.error;
   }
 
-  state.matches = matchesResult.data || [];
+  state.matches = (matchesResult.data || []).map((match) => normalizeMatchRecord(match));
   state.members = membersResult.data || [];
   state.predictions = predictionsResult.data || [];
   state.leaderboard = leaderboardResult.data || [];
@@ -1357,6 +1359,7 @@ function renderDashboard() {
 }
 
 function renderMatchCard(match) {
+  const matchResult = getMatchResult(match);
   const status = computeMatchStatus(match);
   const active = match.id === getSelectedMatch()?.id;
   const entries = getPredictionsForMatch(match.id);
@@ -1367,7 +1370,7 @@ function renderMatchCard(match) {
     ? "Player picks open"
     : liveWindow.scoreWindowOpen
       ? "Score phase open"
-      : match.match_results
+      : matchResult
         ? "Scored"
         : "Locked";
 
@@ -1412,7 +1415,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
   const status = computeMatchStatus(match);
   const entries = getPredictionsForMatch(match.id);
   const liveWindow = getLiveWindowState(match, prediction);
-  const scoreResult = match.match_results;
+  const scoreResult = getMatchResult(match);
   const squadGroups = getPlayingXiGroups(match);
   const hasSquad = squadGroups.some((group) => group.players.length);
   const squadsLoading = isOfficialTeamSquadLoading(match);
@@ -1795,6 +1798,8 @@ function renderAdminTools(match) {
   const selectedSummary = match ? getMatchSyncSummary(match) : null;
   const scheduleYear = getTargetSeasonYear();
   const liveWindow = match ? getLiveWindowState(match, getCurrentUserPrediction(match.id)) : null;
+  const matchResult = match ? getMatchResult(match) : null;
+  const selectedMatchStatus = match ? computeMatchStatus(match) : null;
 
   return `
     <section class="panel">
@@ -1856,7 +1861,23 @@ function renderAdminTools(match) {
                         <button class="ghost-btn" type="button" data-action="toggle-auto-sync" data-match-id="${match.id}">
                           ${match.auto_sync_enabled ? "Pause auto sync" : "Resume auto sync"}
                         </button>
+                        <button class="ghost-btn" type="button" data-action="calculate-match-points" data-match-id="${match.id}" ${
+                          state.settlingMatchIds.has(match.id) || selectedMatchStatus !== "completed"
+                            ? "disabled"
+                            : ""
+                        }>${
+                          state.settlingMatchIds.has(match.id)
+                            ? "Calculating..."
+                            : matchResult
+                              ? "Recalculate points"
+                              : "Calculate points now"
+                        }</button>
                       </div>
+                      ${
+                        selectedMatchStatus === "completed"
+                          ? `<span class="subtle">Use this if the match has finished but the leaderboard has not updated yet. It re-runs point allocation from the official IPL scorecard.</span>`
+                          : ""
+                      }
                       ${
                         match.sync_error
                           ? `<div class="notice notice-error" style="margin-top: 1rem;">${escapeHtml(match.sync_error)}</div>`
@@ -1955,35 +1976,35 @@ function renderAdminTools(match) {
                     <select id="result-winner" name="winner_team">
                       <option value="">Choose winner</option>
                       <option value="${escapeAttribute(match.team_a)}" ${
-                        match.match_results?.winner_team === match.team_a ? "selected" : ""
+                        matchResult?.winner_team === match.team_a ? "selected" : ""
                       }>${escapeHtml(match.team_a)}</option>
                       <option value="${escapeAttribute(match.team_b)}" ${
-                        match.match_results?.winner_team === match.team_b ? "selected" : ""
+                        matchResult?.winner_team === match.team_b ? "selected" : ""
                       }>${escapeHtml(match.team_b)}</option>
                     </select>
                   </div>
                   <div class="field">
                     <label for="result-total">1st innings total</label>
                     <input id="result-total" type="text" inputmode="numeric" name="first_innings_total" value="${escapeAttribute(
-                      match.match_results?.first_innings_total ?? "",
+                      matchResult?.first_innings_total ?? "",
                     )}" placeholder="182" />
                   </div>
                   <div class="field span-2">
                     <label for="result-batsmen">Batsman runs</label>
                     <textarea id="result-batsmen" name="batsman_runs" placeholder="Virat Kohli: 72">${escapeHtml(
-                      mapToLines(match.match_results?.batsman_runs || {}),
+                      mapToLines(matchResult?.batsman_runs || {}),
                     )}</textarea>
                   </div>
                   <div class="field span-2">
                     <label for="result-bowlers">Bowler wickets</label>
                     <textarea id="result-bowlers" name="bowler_wickets" placeholder="Jasprit Bumrah: 2">${escapeHtml(
-                      mapToLines(match.match_results?.bowler_wickets || {}),
+                      mapToLines(matchResult?.bowler_wickets || {}),
                     )}</textarea>
                   </div>
                   <div class="field span-2">
                     <label for="result-notes">Result notes</label>
                     <textarea id="result-notes" name="notes" placeholder="Optional settlement note.">${escapeHtml(
-                      match.match_results?.notes || "",
+                      matchResult?.notes || "",
                     )}</textarea>
                   </div>
                   <div class="field span-2">
@@ -2522,6 +2543,17 @@ async function handleClick(event) {
       return;
     }
 
+    if (action === "calculate-match-points") {
+      const matchId = target.getAttribute("data-match-id");
+      const match = state.matches.find((item) => item.id === matchId);
+      if (!match) {
+        throw new Error("Match not found.");
+      }
+
+      await calculateMatchPointsFromProvider(match);
+      return;
+    }
+
     if (action === "toggle-auto-sync") {
       const matchId = target.getAttribute("data-match-id");
       await toggleAutoSync(matchId);
@@ -2708,6 +2740,29 @@ async function withButtonPending(button, label, task) {
   }
 }
 
+function normalizeMatchResultRelation(value) {
+  if (Array.isArray(value)) {
+    return value[0] || null;
+  }
+
+  return value && typeof value === "object" ? value : null;
+}
+
+function normalizeMatchRecord(match) {
+  if (!match || typeof match !== "object") {
+    return match;
+  }
+
+  return {
+    ...match,
+    match_results: normalizeMatchResultRelation(match.match_results),
+  };
+}
+
+function getMatchResult(match) {
+  return normalizeMatchResultRelation(match?.match_results);
+}
+
 function getActiveLeague() {
   return state.memberships.find((membership) => membership.league_id === state.activeLeagueId)
     ?.leagues;
@@ -2828,7 +2883,7 @@ function getCurrentUserPrediction(matchId) {
 }
 
 function computeMatchStatus(match) {
-  if (match.match_results) {
+  if (getMatchResult(match)) {
     return "completed";
   }
 
@@ -2983,7 +3038,7 @@ function buildLeaderboardFromMatches(members, predictions, matches) {
   for (const prediction of predictions) {
     const row = rowByUserId[prediction.user_id];
     const match = matches.find((item) => item.id === prediction.match_id);
-    const result = match?.match_results;
+    const result = getMatchResult(match);
 
     if (!row) {
       continue;
@@ -3473,7 +3528,7 @@ function getMatchSyncSummary(match) {
 }
 
 function shouldAutoSyncMatch(match) {
-  if (!match?.external_match_id || !match?.auto_sync_enabled || match?.match_results) {
+  if (!match?.external_match_id || !match?.auto_sync_enabled || getMatchResult(match)) {
     return false;
   }
 
@@ -3639,7 +3694,7 @@ async function syncMatchFromProvider(
     const enrichedSnapshot = await enrichFixtureWithPlayingXi(latestSnapshot, match);
     await upsertSyncedMatchRow(match, enrichedSnapshot);
 
-    if (!match.match_results) {
+    if (!getMatchResult(match)) {
       await settleSyncedMatchIfReady(match, enrichedSnapshot);
     }
 
@@ -3675,6 +3730,16 @@ function markMatchSyncing(matchId, isSyncing, background) {
   if (!background) {
     render();
   }
+}
+
+function markMatchSettling(matchId, isSettling) {
+  if (isSettling) {
+    state.settlingMatchIds.add(matchId);
+  } else {
+    state.settlingMatchIds.delete(matchId);
+  }
+
+  render();
 }
 
 async function saveMatchSyncError(matchId, error) {
@@ -3809,16 +3874,24 @@ function shouldAttemptPlayingXiSync(fixture) {
   return startsAt - Date.now() <= SQUAD_SYNC_LOOKAHEAD_MS;
 }
 
-async function settleSyncedMatchIfReady(match, snapshot) {
+async function settleSyncedMatchIfReady(match, snapshot, { throwWhenUnavailable = false } = {}) {
   if (computeProviderMatchStatus(snapshot) !== "completed") {
-    return;
+    if (throwWhenUnavailable) {
+      throw new Error("Official result is not ready yet for this match.");
+    }
+
+    return false;
   }
 
   const scorecard =
     snapshot?.official_scorecard_bundle || (await fetchMatchScorecard(snapshot.external_match_id));
   const settlement = extractSettlementPayload(scorecard, match, snapshot);
   if (!settlement) {
-    return;
+    if (throwWhenUnavailable) {
+      throw new Error("Official IPL scorecard is available, but point extraction is still incomplete.");
+    }
+
+    return false;
   }
 
   const { error } = await state.client.rpc("save_match_result", {
@@ -3832,6 +3905,28 @@ async function settleSyncedMatchIfReady(match, snapshot) {
 
   if (error) {
     throw error;
+  }
+
+  return true;
+}
+
+async function calculateMatchPointsFromProvider(match) {
+  if (!match?.external_match_id) {
+    throw new Error("This match is not linked to an official feed yet.");
+  }
+
+  markMatchSettling(match.id, true);
+
+  try {
+    const latestSnapshot = await fetchProviderMatchSnapshot(match.external_match_id, match);
+    const enrichedSnapshot = await enrichFixtureWithPlayingXi(latestSnapshot, match);
+    await upsertSyncedMatchRow(match, enrichedSnapshot);
+    await settleSyncedMatchIfReady(match, enrichedSnapshot, { throwWhenUnavailable: true });
+    await loadLeagueBundle();
+    render();
+    flash("Points calculated from the official IPL scorecard.", "success");
+  } finally {
+    markMatchSettling(match.id, false);
   }
 }
 
@@ -4914,9 +5009,14 @@ function extractOfficialSettlementFirstInningsTotal(bundle, snapshot) {
   const extras = asArray(inningsOne?.Extras)[0] || {};
   const totalText = cleanNullableText(extras?.Total, 40);
   const totalFromText = totalText?.match(/^(\d+)/)?.[1] || null;
+  const summary = bundle?.summary || {};
+  const summaryText = cleanNullableText(summary?.["1Summary"] || summary?.FirstBattingSummary, 40);
+  const summaryTotalFromText = summaryText?.match(/^(\d+)/)?.[1] || null;
   const parsed =
     toOptionalInteger(extras?.FallScore) ??
     toOptionalInteger(totalFromText) ??
+    toOptionalInteger(summary?.["1FallScore"]) ??
+    toOptionalInteger(summaryTotalFromText) ??
     toOptionalInteger(snapshot?.raw?.["1FallScore"]) ??
     null;
 
@@ -4960,6 +5060,26 @@ function findWinningTeam(root, match, snapshot) {
     if (teamName) {
       return teamName;
     }
+  }
+
+  const winningTeamId = cleanNullableText(root?.WinningTeamID || snapshot?.raw?.WinningTeamID, 40);
+  const homeTeamId = cleanNullableText(root?.HomeTeamID || snapshot?.raw?.HomeTeamID, 40);
+  const awayTeamId = cleanNullableText(root?.AwayTeamID || snapshot?.raw?.AwayTeamID, 40);
+  const homeTeamName = matchTeamFromText(
+    root?.HomeTeamName || snapshot?.raw?.HomeTeamName || root?.Team1 || snapshot?.raw?.Team1,
+    match,
+  );
+  const awayTeamName = matchTeamFromText(
+    root?.AwayTeamName || snapshot?.raw?.AwayTeamName || root?.Team2 || snapshot?.raw?.Team2,
+    match,
+  );
+
+  if (winningTeamId && homeTeamId && winningTeamId === homeTeamId && homeTeamName) {
+    return homeTeamName;
+  }
+
+  if (winningTeamId && awayTeamId && winningTeamId === awayTeamId && awayTeamName) {
+    return awayTeamName;
   }
 
   return null;
