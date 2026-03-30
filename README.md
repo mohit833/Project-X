@@ -63,6 +63,7 @@ python3 -m http.server 8080
    - `SUPABASE_SERVICE_ROLE_KEY`
    - `CRON_SECRET`
 5. After deploy, share the Vercel URL with your friends.
+6. If Vercel ever seems stuck on an old build, push a fresh commit instead of relying only on redeploying an older deployment snapshot.
 
 ## Deployment checklist
 
