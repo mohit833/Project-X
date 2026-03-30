@@ -14,7 +14,7 @@ A multiplayer IPL prediction web app for friend groups. It supports:
 
 - Static frontend: plain HTML, CSS, and browser JavaScript
 - Backend: Supabase Auth + Postgres + Realtime
-- Hosting: Vercel static hosting
+- Hosting: Vercel static hosting + serverless API routes + cron
 
 This keeps the app cheap and easy to deploy for a private friends league.
 
@@ -38,14 +38,18 @@ This keeps the app cheap and easy to deploy for a private friends league.
    - set `SUPABASE_URL`
    - set `SUPABASE_ANON_KEY`
    - set `DEMO_MODE: false`
-5. Serve the folder locally:
+5. Add Vercel environment variables:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `CRON_SECRET`
+6. Serve the folder locally:
 
 ```bash
 cd /Users/mohitmb/Downloads/ipl-prediction-league
 python3 -m http.server 8080
 ```
 
-6. Open `http://localhost:8080`.
+7. Open `http://localhost:8080`.
 
 ## Deploy for free
 
@@ -54,7 +58,11 @@ python3 -m http.server 8080
 1. Push this folder to GitHub, or upload/import it directly into Vercel.
 2. Use the project root `/Users/mohitmb/Downloads/ipl-prediction-league`.
 3. Because this is a static app, no framework preset is required.
-4. After deploy, share the Vercel URL with your friends.
+4. Add these Vercel environment variables before your production deploy:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `CRON_SECRET`
+5. After deploy, share the Vercel URL with your friends.
 
 ## Deployment checklist
 
@@ -69,6 +77,8 @@ python3 -m http.server 8080
 5. `app/config.js` updated with project URL and anon key
 6. Vercel project deployed from this folder
 7. Production Vercel URL copied back into Supabase Auth Site URL and Redirect URLs
+8. Vercel env vars set for `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `CRON_SECRET`
+9. Vercel cron calling `/api/cron-sync` every minute in production
 
 ## Mobile install
 
@@ -94,13 +104,21 @@ After the app is hosted:
 5. Admin enters result data after the match.
 6. Leaderboard updates automatically.
 
+## Live sync and scoring
+
+- Admin browser auto-sync still exists for immediate in-session updates.
+- Production now also has a Vercel cron at `/api/cron-sync` that runs every minute.
+- The cron updates active IPL-linked matches even when nobody has the app open.
+- Completed official matches are auto-settled into `match_results` server-side.
+- Protect the cron with `CRON_SECRET` and give it `SUPABASE_SERVICE_ROLE_KEY` so it can write match updates safely.
+
 ## Important fairness rules in this build
 
 - All lock checks use server-side timestamps in Postgres.
 - Duplicate batsman, bowler, and score predictions are blocked by database constraints.
 - If a player submits core picks before `playing_xi_announced_at`, those core picks cannot be changed later.
 - Exact score can still be added later if it was left blank, as long as the score window is still open.
-- Match result scoring is manual in this MVP. That avoids unreliable free cricket APIs deciding lock times incorrectly.
+- Official IPL-linked matches can now auto-sync and auto-settle from the server cron.
 
 ## Recommended admin policy
 
