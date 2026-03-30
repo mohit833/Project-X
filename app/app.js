@@ -4676,7 +4676,9 @@ function getScorePredictionWinnerId(matchPredictions, actualScore) {
 }
 
 function getLiveWindowState(match, prediction) {
-  const currentBall = toOptionalInteger(match?.current_innings_ball);
+  const currentBall =
+    toOptionalInteger(match?.current_innings_ball) ??
+    oversToBalls(match?.current_over_display);
   const currentOverDisplay =
     cleanNullableText(match?.current_over_display, 20) ||
     (currentBall !== null ? formatBallsAsOvers(currentBall) : null);
@@ -6005,16 +6007,21 @@ function extractOversValue(entry) {
 }
 
 function oversToBalls(oversValue) {
-  const text = String(oversValue || "").trim();
-  if (!text) {
+  const rawText = String(oversValue || "").trim();
+  if (!rawText) {
     return null;
   }
 
-  const [oversPart, ballsPart = "0"] = text.split(".");
+  const match = rawText.match(/(\d+)(?:\.(\d+))?/);
+  if (!match) {
+    return null;
+  }
+
+  const [, oversPart, ballsPart = "0"] = match;
   const overs = Number.parseInt(oversPart, 10);
   const balls = Number.parseInt(ballsPart.slice(0, 1) || "0", 10);
 
-  if (Number.isNaN(overs) || Number.isNaN(balls)) {
+  if (Number.isNaN(overs) || Number.isNaN(balls) || balls > 5) {
     return null;
   }
 
