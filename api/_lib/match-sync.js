@@ -71,6 +71,11 @@ async function syncActiveMatches({
         supabaseServiceRoleKey,
         match.id,
         buildMatchUpdatePayload(match, snapshot, {
+          persistedStatus: computePersistedProviderStatus(
+            snapshot,
+            match,
+            Boolean(settlement),
+          ),
           syncError: partialSettlementMessage,
         }),
       );
@@ -196,7 +201,11 @@ async function upsertMatchResult(
   });
 }
 
-function buildMatchUpdatePayload(match, snapshot, { syncError = null } = {}) {
+function buildMatchUpdatePayload(
+  match,
+  snapshot,
+  { persistedStatus, syncError = null } = {},
+) {
   const nowIso = new Date().toISOString();
   const currentBall =
     snapshot?.current_innings_ball ?? match?.current_innings_ball ?? null;
@@ -214,7 +223,11 @@ function buildMatchUpdatePayload(match, snapshot, { syncError = null } = {}) {
     provider: cleanNullableText(snapshot?.provider, 40) || match?.provider || "ipl-official",
     series_name:
       cleanNullableText(snapshot?.series_name, 120) || match?.series_name || null,
-    status: cleanNullableText(snapshot?.status, 20) || match?.status || "scheduled",
+    status:
+      cleanNullableText(persistedStatus, 20) ||
+      cleanNullableText(snapshot?.status, 20) ||
+      match?.status ||
+      "scheduled",
     current_innings_ball: currentBall,
     current_over_display: overDisplay,
     last_synced_at: nowIso,
@@ -242,6 +255,26 @@ function shouldAutoSyncMatch(match) {
 
   const now = Date.now();
   return startsAt <= now + 36 * 60 * 60 * 1000 && startsAt >= now - 48 * 60 * 60 * 1000;
+}
+
+function computePersistedProviderStatus(snapshot, existingMatch, settlementReady = false) {
+  const nextStatus =
+    cleanNullableText(snapshot?.status, 20) || existingMatch?.status || "scheduled";
+
+  if (nextStatus !== "completed") {
+    return nextStatus;
+  }
+
+  if (settlementReady) {
+    return "completed";
+  }
+
+  const previousStatus = cleanNullableText(existingMatch?.status, 20);
+  if (previousStatus === "live" || previousStatus === "locked") {
+    return previousStatus;
+  }
+
+  return "locked";
 }
 
 async function fetchProviderMatchSnapshot(externalMatchId, fallbackMatch = null) {

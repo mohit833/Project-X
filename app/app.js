@@ -1180,9 +1180,10 @@ async function probeVisibleMatchState(match) {
 
   try {
     const snapshot = await fetchProviderMatchSnapshot(match.external_match_id, match);
+    const persistedStatus = computePersistedProviderStatus(snapshot, match, false);
     const normalizedSnapshot = normalizeMatchRecord({
       ...match,
-      status: cleanNullableText(snapshot?.status || match.status, 20) || match.status,
+      status: persistedStatus,
       current_innings_ball:
         snapshot?.current_innings_ball ?? match.current_innings_ball ?? null,
       current_over_display:
@@ -5642,7 +5643,28 @@ async function syncMatchFromProvider(
   try {
     const latestSnapshot = await fetchProviderMatchSnapshot(match.external_match_id, match);
     const enrichedSnapshot = await enrichFixtureWithPlayingXi(latestSnapshot, match);
-    await upsertSyncedMatchRow(match, enrichedSnapshot);
+    let settlementPreview = null;
+    if (!getMatchResult(match) && computeProviderMatchStatus(enrichedSnapshot) === "completed") {
+      try {
+        settlementPreview = extractSettlementPayload(
+          enrichedSnapshot?.official_scorecard_bundle ||
+            (await fetchMatchScorecard(enrichedSnapshot.external_match_id)),
+          match,
+          enrichedSnapshot,
+        );
+      } catch (error) {
+        console.warn("Settlement preview failed", error);
+      }
+    }
+
+    await upsertSyncedMatchRow(match, {
+      ...enrichedSnapshot,
+      persisted_status: computePersistedProviderStatus(
+        enrichedSnapshot,
+        match,
+        Boolean(settlementPreview),
+      ),
+    });
 
     if (!getMatchResult(match)) {
       await settleSyncedMatchIfReady(match, enrichedSnapshot);
@@ -5763,7 +5785,11 @@ function buildMatchPayloadFromFixture(fixture, existingMatch, notes) {
       existingMatch?.picks_deadline_at || addMinutes(startsAt, 20) || startsAt,
     score_deadline_at:
       existingMatch?.score_deadline_at || addMinutes(startsAt, 45) || startsAt,
-    status: fixture.status || existingMatch?.status || "scheduled",
+    status:
+      cleanNullableText(fixture.persisted_status, 20) ||
+      cleanNullableText(fixture.status, 20) ||
+      existingMatch?.status ||
+      "scheduled",
     notes,
     provider: fixture.provider || existingMatch?.provider || "manual",
     external_match_id:
@@ -5871,7 +5897,10 @@ async function calculateMatchPointsFromProvider(match) {
   try {
     const latestSnapshot = await fetchProviderMatchSnapshot(match.external_match_id, match);
     const enrichedSnapshot = await enrichFixtureWithPlayingXi(latestSnapshot, match);
-    await upsertSyncedMatchRow(match, enrichedSnapshot);
+    await upsertSyncedMatchRow(match, {
+      ...enrichedSnapshot,
+      persisted_status: computePersistedProviderStatus(enrichedSnapshot, match, false),
+    });
     await settleSyncedMatchIfReady(match, enrichedSnapshot, { throwWhenUnavailable: true });
     await loadLeagueBundle();
     render();
@@ -6560,6 +6589,26 @@ function computeProviderMatchStatus(snapshot) {
   }
 
   return "scheduled";
+}
+
+function computePersistedProviderStatus(snapshot, existingMatch, settlementReady = false) {
+  const nextStatus =
+    cleanNullableText(snapshot?.status, 20) || existingMatch?.status || "scheduled";
+
+  if (nextStatus !== "completed") {
+    return nextStatus;
+  }
+
+  if (settlementReady || getMatchResult(existingMatch)) {
+    return "completed";
+  }
+
+  const previousStatus = cleanNullableText(existingMatch?.status, 20);
+  if (previousStatus === "live" || previousStatus === "locked") {
+    return previousStatus;
+  }
+
+  return "locked";
 }
 
 function extractProviderTeams(rawMatch) {
