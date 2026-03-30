@@ -103,6 +103,8 @@ const state = {
   autoSyncTimer: null,
   autoSyncBusy: false,
   lastAutoSyncKickAt: 0,
+  probingMatchIds: new Set(),
+  matchStatusProbeTimes: {},
   providerFixtures: [],
   loadingProviderFixtures: false,
   syncingMatchIds: new Set(),
@@ -131,6 +133,8 @@ const DEMO_LEAGUE_ID = "demo-league";
 const MIN_OFFICIAL_TEAM_SQUAD_SIZE = 11;
 const TEAM_SQUAD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
 const AUTO_SYNC_RESUME_THROTTLE_MS = 15 * 1000;
+const MATCH_STATUS_PROBE_STALE_MS = 2 * 60 * 1000;
+const MATCH_STATUS_PROBE_THROTTLE_MS = 60 * 1000;
 const DEMO_MATCHES = [
   {
     id: "match-1",
@@ -812,6 +816,17 @@ async function loadLeagueBundle() {
   state.matches = (matchesResult.data || []).map((match) => normalizeMatchRecord(match));
   state.members = membersResult.data || [];
   state.predictions = predictionsResult.data || [];
+  const validMatchIds = new Set(state.matches.map((match) => match.id));
+  for (const matchId of Object.keys(state.matchStatusProbeTimes)) {
+    if (!validMatchIds.has(matchId)) {
+      delete state.matchStatusProbeTimes[matchId];
+    }
+  }
+  for (const matchId of Array.from(state.probingMatchIds)) {
+    if (!validMatchIds.has(matchId)) {
+      state.probingMatchIds.delete(matchId);
+    }
+  }
   state.leaderboard = buildLeaderboardFromMatches(
     state.members,
     state.predictions,
@@ -1114,6 +1129,102 @@ function handleAutoSyncResume() {
   requestAutoSync({ force: true });
 }
 
+function shouldProbeVisibleMatch(match) {
+  if (!match?.id || !match?.external_match_id || getMatchResult(match)) {
+    return false;
+  }
+
+  if (state.syncingMatchIds.has(match.id) || state.probingMatchIds.has(match.id)) {
+    return false;
+  }
+
+  const status = computeMatchStatus(match);
+  if (!["live", "locked"].includes(status)) {
+    return false;
+  }
+
+  const lastProbeAt = state.matchStatusProbeTimes[match.id] || 0;
+  if (Date.now() - lastProbeAt < MATCH_STATUS_PROBE_THROTTLE_MS) {
+    return false;
+  }
+
+  const lastSyncedAt = match?.last_synced_at ? new Date(match.last_synced_at).getTime() : 0;
+  if (!lastSyncedAt || Number.isNaN(lastSyncedAt)) {
+    return true;
+  }
+
+  return Date.now() - lastSyncedAt >= MATCH_STATUS_PROBE_STALE_MS;
+}
+
+async function maybeProbeVisibleMatchState() {
+  const route = getCurrentRoute();
+  if (!["home", "matches", "league"].includes(route.page)) {
+    return;
+  }
+
+  const match = getSelectedMatch();
+  if (!shouldProbeVisibleMatch(match)) {
+    return;
+  }
+
+  await probeVisibleMatchState(match);
+}
+
+async function probeVisibleMatchState(match) {
+  if (!match?.id || !match?.external_match_id) {
+    return;
+  }
+
+  state.probingMatchIds.add(match.id);
+  state.matchStatusProbeTimes[match.id] = Date.now();
+
+  try {
+    const snapshot = await fetchProviderMatchSnapshot(match.external_match_id, match);
+    const normalizedSnapshot = normalizeMatchRecord({
+      ...match,
+      status: cleanNullableText(snapshot?.status || match.status, 20) || match.status,
+      current_innings_ball:
+        snapshot?.current_innings_ball ?? match.current_innings_ball ?? null,
+      current_over_display:
+        cleanNullableText(snapshot?.current_over_display, 20) || match.current_over_display || null,
+      last_synced_at: new Date().toISOString(),
+      sync_error: null,
+    });
+
+    const hasMeaningfulChange =
+      computeMatchStatus(normalizedSnapshot) !== computeMatchStatus(match) ||
+      normalizedSnapshot.current_innings_ball !== match.current_innings_ball ||
+      normalizedSnapshot.current_over_display !== match.current_over_display;
+
+    if (!hasMeaningfulChange) {
+      return;
+    }
+
+    if (currentMembership()?.role === "admin") {
+      await syncMatchFromProvider(match, {
+        quiet: true,
+        background: true,
+        flashSuccess: false,
+      });
+      return;
+    }
+
+    state.matches = state.matches.map((entry) =>
+      entry.id === match.id ? normalizedSnapshot : entry,
+    );
+    state.leaderboard = buildLeaderboardFromMatches(
+      state.members,
+      state.predictions,
+      state.matches,
+    );
+    render();
+  } catch (error) {
+    console.warn("Visible match status probe failed", error);
+  } finally {
+    state.probingMatchIds.delete(match.id);
+  }
+}
+
 function scheduleLeagueReload() {
   if (!state.client || !state.activeLeagueId) {
     return;
@@ -1233,6 +1344,7 @@ function render() {
   `;
 
   void ensureOfficialTeamSquadsForMatches(state.matches);
+  void maybeProbeVisibleMatchState();
 }
 
 function getUtilityLabel() {
