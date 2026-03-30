@@ -1,9 +1,3 @@
 {
-  "cleanUrls": true,
-  "crons": [
-    {
-      "path": "/api/cron-sync",
-      "schedule": "* * * * *"
-    }
-  ]
+  "cleanUrls": true
 }
