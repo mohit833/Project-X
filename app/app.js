@@ -1153,6 +1153,7 @@ function render() {
         ${renderNotice()}
         ${renderRouteContent(route)}
       </main>
+      ${renderMobilePrimaryNav(route)}
     </div>
   `;
 
@@ -1200,6 +1201,37 @@ function renderPrimaryNav(route) {
       `;
     })
     .join("");
+}
+
+function renderMobilePrimaryNav(route) {
+  const items = [
+    { label: "Home", shortLabel: "Home", route: { page: "home" } },
+    {
+      label: "Fixtures",
+      shortLabel: "Matches",
+      route: { page: "matches", section: "fixtures", matchId: getSelectedMatch()?.id },
+    },
+    { label: "Table", shortLabel: "Table", route: { page: "standings" } },
+    { label: "League Hub", shortLabel: "League", route: { page: "league" } },
+    { label: "Profile", shortLabel: "Profile", route: { page: "account" } },
+  ];
+
+  return `
+    <nav class="mobile-dock" aria-label="Primary">
+      ${items
+        .map((item) => {
+          const active =
+            route.page === item.route.page &&
+            (item.route.page !== "matches" || route.page === "matches");
+          return `
+            <a class="mobile-dock-link ${active ? "active" : ""}" href="${buildRouteHref(item.route)}">
+              <span>${escapeHtml(item.shortLabel)}</span>
+            </a>
+          `;
+        })
+        .join("")}
+    </nav>
+  `;
 }
 
 function getRouteMeta(route) {
@@ -1783,30 +1815,45 @@ function renderMatchesPage(route) {
   }
 
   return `
-    <section class="matches-route-grid">
-      <aside class="panel match-rail-panel">
-        <div class="section-head">
-          <div>
-            <h3>Fixture list</h3>
-            <p>Choose the match you want to work on.</p>
-          </div>
+    <section class="route-stack">
+      ${renderMatchSwitcherDeck(section)}
+      ${
+        section === "centre"
+          ? match
+            ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
+            : `<section class="panel"><div class="empty-state">Choose a match to open the match centre.</div></section>`
+          : `
+            ${renderMatchSummaryStrip(match)}
+            ${
+              section === "picks"
+                ? renderPicksBoardPanel(match)
+                : isAdmin
+                  ? renderAdminTools(match)
+                  : `<section class="panel"><div class="empty-state">Only league admins can open the admin console.</div></section>`
+            }
+          `
+      }
+    </section>
+  `;
+}
+
+function renderMatchSwitcherDeck(section) {
+  const selectedMatch = getSelectedMatch();
+
+  return `
+    <section class="panel match-switcher-deck">
+      <div class="section-head">
+        <div>
+          <span class="panel-kicker">Quick switch</span>
+          <h3>${escapeHtml(section === "centre" ? "Match command deck" : "Choose your fixture")}</h3>
+          <p>${
+            selectedMatch
+              ? `Currently focused on ${selectedMatch.title || `${selectedMatch.team_a} vs ${selectedMatch.team_b}`}.`
+              : "Choose one match and the rest of the page follows it."
+          }</p>
         </div>
-        ${renderMatchRail(section)}
-      </aside>
-      <div class="route-stack">
-        ${renderMatchSummaryStrip(match)}
-        ${
-          section === "centre"
-            ? match
-              ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
-              : `<section class="panel"><div class="empty-state">Choose a match to open the match centre.</div></section>`
-            : section === "picks"
-              ? renderPicksBoardPanel(match)
-              : isAdmin
-                ? renderAdminTools(match)
-                : `<section class="panel"><div class="empty-state">Only league admins can open the admin console.</div></section>`
-        }
       </div>
+      ${renderMatchRail(section, "horizontal")}
     </section>
   `;
 }
@@ -1938,13 +1985,13 @@ function renderFixtureTeamBlock(teamName) {
   `;
 }
 
-function renderMatchRail(section) {
+function renderMatchRail(section, layout = "stack") {
   if (!state.matches.length) {
     return `<div class="empty-state">No fixtures are loaded yet.</div>`;
   }
 
   return `
-    <div class="match-rail">
+    <div class="match-rail ${layout === "horizontal" ? "match-rail-horizontal" : ""}">
       ${state.matches
         .map(
           (match) => `
@@ -1990,6 +2037,92 @@ function renderMatchSummaryStrip(match) {
         <span class="chip"><strong>Posted picks</strong>${escapeHtml(getPredictionsForMatch(match.id).length)}</span>
       </div>
     </section>
+  `;
+}
+
+function renderMatchCentreQuickNav(match, isAdmin, hasResult) {
+  return `
+    <div class="match-centre-quick-nav">
+      <button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="prediction-panel">Your pick</button>
+      <button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="live-status-panel">Live</button>
+      <button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="picks-board-panel">Taken picks</button>
+      <button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="squad-panel">Squads</button>
+      ${
+        hasResult
+          ? `<button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="result-panel">Result</button>`
+          : ""
+      }
+      ${
+        isAdmin
+          ? `<a class="ghost-btn" href="${buildRouteHref({ page: "matches", section: "admin", matchId: match.id })}">Admin</a>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderPredictionSnapshot(prediction) {
+  if (!prediction) {
+    return `
+      <div class="prediction-snapshot prediction-snapshot-empty">
+        <div class="entry-item">
+          <div>
+            <strong>No prediction saved yet</strong>
+            <span class="subtle">Choose your pair and winner first, then lock the score once it opens.</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="prediction-snapshot">
+      <div class="entry-item">
+        <div>
+          <strong>${escapeHtml(prediction.batsman_name || "Batsman not set")}</strong>
+          <span class="subtle">Batsman</span>
+        </div>
+        <div class="entry-stats">
+          <strong>${escapeHtml(prediction.team_pick || "Winner not set")}</strong>
+          <span class="subtle">Team pick</span>
+        </div>
+      </div>
+      <div class="entry-item">
+        <div>
+          <strong>${escapeHtml(prediction.bowler_name || "Bowler not set")}</strong>
+          <span class="subtle">Bowler</span>
+        </div>
+        <div class="entry-stats">
+          <strong>${escapeHtml(
+            prediction.predicted_score !== null && prediction.predicted_score !== undefined
+              ? prediction.predicted_score
+              : "Score not set",
+          )}</strong>
+          <span class="subtle">Predicted total</span>
+        </div>
+      </div>
+      <div class="chip-list">
+        ${
+          prediction.core_locked_due_to_pre_xi
+            ? `<span class="chip"><strong>Before XI</strong>Saved before team news</span>`
+            : ""
+        }
+        ${
+          prediction.core_submitted_at
+            ? `<span class="chip"><strong>Core saved</strong>${escapeHtml(
+                formatDate(prediction.core_submitted_at),
+              )}</span>`
+            : ""
+        }
+        ${
+          prediction.score_submitted_at
+            ? `<span class="chip"><strong>Score saved</strong>${escapeHtml(
+                formatDate(prediction.score_submitted_at),
+              )}</span>`
+            : ""
+        }
+      </div>
+    </div>
   `;
 }
 
@@ -2738,53 +2871,76 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
     : liveWindow.scoreLocked
       ? "Score locked"
       : "Score opens after 3.1 overs";
+  const actionLabel = prediction ? "Update your prediction" : "Make your prediction";
+  const userStateLabel = prediction
+    ? prediction.score_submitted_at
+      ? "Prediction complete"
+      : prediction.core_submitted_at
+        ? "Core saved"
+        : "Started"
+    : "Waiting for your entry";
 
   return `
-    <section class="panel arena-panel">
-      <div class="arena-board">
-        <div class="arena-team">
-          <span class="arena-team-badge">${escapeHtml(teamAShort)}</span>
-          <div>
-            <span class="panel-kicker">Home call</span>
-            <strong>${escapeHtml(match.team_a)}</strong>
+    <section class="arena-panel match-command-shell">
+      <section class="panel match-command-hero">
+        <div class="match-command-hero-main">
+          <div class="match-command-hero-top">
+            <span class="tag tag-${status}">${labelizeStatus(status)}</span>
+            <span class="subtle">${escapeHtml(formatDate(match.starts_at))}</span>
           </div>
-        </div>
-        <div class="arena-centre">
-          <span class="tag tag-${status}">${labelizeStatus(status)}</span>
-          <h3>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h3>
-          <p>${escapeHtml(match.venue || "Venue TBD")} · ${escapeHtml(formatDate(match.starts_at))}</p>
-          <div class="arena-meta-grid">
-            <span class="chip"><strong>Clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
+          <div class="match-command-clash">
+            <div class="match-command-team">
+              <span class="arena-team-badge">${escapeHtml(teamAShort)}</span>
+              <div>
+                <span class="panel-kicker">Home</span>
+                <strong>${escapeHtml(match.team_a)}</strong>
+              </div>
+            </div>
+            <div class="match-command-versus">VS</div>
+            <div class="match-command-team match-command-team-away">
+              <span class="arena-team-badge">${escapeHtml(teamBShort)}</span>
+              <div>
+                <span class="panel-kicker">Away</span>
+                <strong>${escapeHtml(match.team_b)}</strong>
+              </div>
+            </div>
+          </div>
+          <div class="match-command-info-grid">
+            <span class="chip"><strong>Live</strong>${escapeHtml(syncSummary.liveClock)}</span>
             <span class="chip"><strong>Core</strong>${escapeHtml(formatCoreLockLabel(match, liveWindow))}</span>
             <span class="chip"><strong>Score</strong>${escapeHtml(formatScoreLockLabel(match, liveWindow))}</span>
+            <span class="chip"><strong>Last synced</strong>${escapeHtml(syncSummary.lastSynced)}</span>
+            <span class="chip"><strong>Picks posted</strong>${escapeHtml(entries.length)}</span>
+            <span class="chip"><strong>Venue</strong>${escapeHtml(match.venue || "Venue TBD")}</span>
           </div>
+          ${renderMatchCentreQuickNav(match, isAdmin, Boolean(scoreResult))}
         </div>
-        <div class="arena-team arena-team-away">
-          <span class="arena-team-badge">${escapeHtml(teamBShort)}</span>
-          <div>
-            <span class="panel-kicker">Away call</span>
-            <strong>${escapeHtml(match.team_b)}</strong>
+        <aside class="match-command-status-card">
+          <span class="panel-kicker">Your state</span>
+          <strong>${escapeHtml(userStateLabel)}</strong>
+          <p>${escapeHtml(predictionMessage)}</p>
+          <div class="match-command-status-actions">
+            <button class="btn" type="button" data-action="jump-match-panel" data-panel-id="prediction-panel">${escapeHtml(actionLabel)}</button>
+            ${
+              isAdmin
+                ? `<button class="ghost-btn" type="button" data-action="sync-selected-match" data-match-id="${match.id}" ${
+                    state.syncingMatchIds.has(match.id) ? "disabled" : ""
+                  }>${state.syncingMatchIds.has(match.id) ? "Syncing..." : "Sync now"}</button>`
+                : ""
+            }
           </div>
-        </div>
-      </div>
-
-      <div class="lock-strip">
-        <div class="lock-strip-card ${liveWindow.coreWindowOpen ? "is-live" : liveWindow.coreLocked ? "is-locked" : ""}">
-          <span>Player picks</span>
-          <strong>${liveWindow.coreLocked ? "Closed at 3.1" : "Open now"}</strong>
-          <p>One batsman, one bowler, one winner. Same batsman-bowler pair cannot repeat.</p>
-        </div>
-        <div class="lock-strip-card ${liveWindow.scoreWindowOpen ? "is-live" : liveWindow.scoreLocked ? "is-locked" : ""}">
-          <span>Score window</span>
-          <strong>${liveWindow.scoreWindowOpen ? "3.1 to 7.1 live" : liveWindow.scoreLocked ? "Locked at 7.1" : "Opens after 3.1"}</strong>
-          <p>Only one score per member. If nobody is exact, the single nearest score wins.</p>
-        </div>
-        <div class="lock-strip-card">
-          <span>Feed engine</span>
-          <strong>${escapeHtml(syncSummary.source)}</strong>
-          <p>Official IPL squads, live innings clock, and automatic settlement when scorecards land.</p>
-        </div>
-      </div>
+          <div class="match-command-state-strip">
+            <div class="match-command-state-pill ${canEditCore ? "is-live" : liveWindow.coreLocked ? "is-locked" : ""}">
+              <span>Core picks</span>
+              <strong>${canEditCore ? "Open" : liveWindow.coreLocked ? "Locked" : "Waiting"}</strong>
+            </div>
+            <div class="match-command-state-pill ${canEditScore ? "is-live" : liveWindow.scoreLocked ? "is-locked" : ""}">
+              <span>Score call</span>
+              <strong>${canEditScore ? "Open" : liveWindow.scoreLocked ? "Locked" : "Waiting"}</strong>
+            </div>
+          </div>
+        </aside>
+      </section>
 
       ${
         match.notes
@@ -2797,13 +2953,12 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           : ""
       }
 
-      <div class="grid-2 match-room-grid">
-        <div class="panel entry-shell">
-          <div id="prediction-panel" class="prediction-anchor"></div>
+      <section class="match-command-layout">
+        <aside class="panel entry-shell prediction-dock" id="prediction-panel">
           <div class="section-head">
             <div>
               <span class="panel-kicker">Your entry</span>
-              <h4>Prediction desk</h4>
+              <h4>Prediction dock</h4>
               <p>${predictionMessage}</p>
             </div>
           </div>
@@ -2817,7 +2972,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                     <div class="entry-stage-head">
                       <div>
                         <span class="panel-kicker">Phase one</span>
-                        <h5>Player picks + match winner</h5>
+                        <h5>Player picks + winner</h5>
                       </div>
                       <span class="tag ${canEditCore ? "tag-live" : "tag-locked"}">${canEditCore ? "Open" : "Locked"}</span>
                     </div>
@@ -2851,9 +3006,9 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                         <small>
                           ${
                             hasSquad
-                              ? "Pick from the official IPL team squads. Batsman includes batters and all-rounders; bowler includes bowlers and all-rounders. Final points come only from the actual match scorecard, so a locked pick stays at 0 if that player does not appear in the XI / scorecard."
+                              ? "Pick from the official IPL squads. Batters and all-rounders count for batsman, bowlers and all-rounders count for bowler."
                               : squadsLoading
-                                ? "Loading the official IPL team squads for both teams. The dropdowns will populate as soon as those roster pages are fetched."
+                                ? "Official squads are loading. The dropdowns will unlock as soon as those rosters arrive."
                                 : "Official IPL team squads are not available yet for this fixture."
                           }
                         </small>
@@ -2891,7 +3046,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                       </div>
                       <div class="field span-2">
                         <small>
-                          Exact score prediction opens right after 3.1 overs and locks at 7.1 overs. Only numbers are allowed. If nobody hits the exact total, the single nearest score gets the points.
+                          Exact score prediction opens after 3.1 overs and locks at 7.1 overs. If nobody is exact, the single nearest score wins.
                         </small>
                       </div>
                       <div class="field span-2">
@@ -2901,159 +3056,146 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                   </div>
                 `
           }
-          ${
-            prediction
-              ? `
-                <div class="prediction-snapshot">
-                  <div class="entry-item">
-                    <div>
-                      <strong>${escapeHtml(prediction.batsman_name || "Batsman not set")}</strong>
-                      <span class="subtle">Batsman</span>
-                    </div>
-                    <div class="entry-stats">
-                      <strong>${escapeHtml(prediction.team_pick || "Winner not set")}</strong>
-                      <span class="subtle">Team pick</span>
-                    </div>
-                  </div>
-                  <div class="entry-item">
-                    <div>
-                      <strong>${escapeHtml(prediction.bowler_name || "Bowler not set")}</strong>
-                      <span class="subtle">Bowler</span>
-                    </div>
-                    <div class="entry-stats">
-                      <strong>${escapeHtml(
-                        prediction.predicted_score !== null && prediction.predicted_score !== undefined
-                          ? prediction.predicted_score
-                          : "Score not set",
-                      )}</strong>
-                      <span class="subtle">Predicted total</span>
-                    </div>
-                  </div>
-                  <div class="chip-list">
-                    ${
-                      prediction.core_locked_due_to_pre_xi
-                        ? `<span class="chip"><strong>Before XI</strong>Saved before team news</span>`
-                        : ""
-                    }
-                    ${
-                      prediction.core_submitted_at
-                        ? `<span class="chip"><strong>Core saved</strong>${escapeHtml(
-                            formatDate(prediction.core_submitted_at),
-                          )}</span>`
-                        : ""
-                    }
-                    ${
-                      prediction.score_submitted_at
-                        ? `<span class="chip"><strong>Score saved</strong>${escapeHtml(
-                            formatDate(prediction.score_submitted_at),
-                          )}</span>`
-                        : ""
-                    }
-                  </div>
-                </div>
-              `
-              : ""
-          }
-        </div>
+          ${renderPredictionSnapshot(prediction)}
+        </aside>
 
-        <div class="panel prediction-board">
-          <div class="section-head">
-            <div>
-              <span class="panel-kicker">Locked by others</span>
-              <h4>Taken picks</h4>
-              <p>Watch claimed pairs and score calls live so no one wastes time on taken slots.</p>
+        <div class="match-content-stack">
+          <section class="panel live-pulse-panel" id="live-status-panel">
+            <div class="section-head">
+              <div>
+                <span class="panel-kicker">Live command</span>
+                <h4>Match state</h4>
+                <p>The clock, locks, sync freshness, and scoring state that matter right now.</p>
+              </div>
             </div>
-          </div>
-          ${
-            entries.length
-              ? `
-                <div class="entry-list">
-                  ${entries.map((entry) => renderPredictionRow(entry)).join("")}
-                </div>
-              `
-              : `<div class="empty-state">No one has posted yet.</div>`
-          }
-        </div>
-      </div>
-
-      <div class="grid-2 roster-engine-grid">
-        <div class="panel roster-panel">
-          <div class="section-head">
-            <div>
-              <span class="panel-kicker">Selection pool</span>
-              <h4>Official squads</h4>
-              <p>${hasSquad ? "Player picks use the official IPL season squads. The live scorecard decides the actual points." : squadsLoading ? "Official IPL team rosters are loading now." : "Official IPL team rosters are not available yet for this fixture."}</p>
+            <div class="lock-strip match-pulse-strip">
+              <div class="lock-strip-card ${liveWindow.coreWindowOpen ? "is-live" : liveWindow.coreLocked ? "is-locked" : ""}">
+                <span>Player picks</span>
+                <strong>${liveWindow.coreLocked ? "Closed at 3.1" : "Open now"}</strong>
+                <p>One batsman, one bowler, one winner. Same batsman-bowler pair cannot repeat.</p>
+              </div>
+              <div class="lock-strip-card ${liveWindow.scoreWindowOpen ? "is-live" : liveWindow.scoreLocked ? "is-locked" : ""}">
+                <span>Score window</span>
+                <strong>${liveWindow.scoreWindowOpen ? "3.1 to 7.1 live" : liveWindow.scoreLocked ? "Locked at 7.1" : "Opens after 3.1"}</strong>
+                <p>One exact total per member. If nobody is exact, the single nearest score wins.</p>
+              </div>
+              <div class="lock-strip-card">
+                <span>Feed engine</span>
+                <strong>${escapeHtml(syncSummary.source)}</strong>
+                <p>${escapeHtml(syncSummary.playingXiLabel)}. Auto settlement kicks in when the official scorecard lands.</p>
+              </div>
             </div>
-          </div>
-          ${
-            hasSquad
-              ? `<div class="roster-grid">${squadGroups
-                  .map(
-                    (group) => `
-                      <div class="team-block roster-card">
-                        <div class="roster-card-head">
-                          <span class="arena-team-badge">${escapeHtml(getTeamShortCode(group.teamName))}</span>
-                          <strong>${escapeHtml(group.teamName)}</strong>
-                        </div>
-                        <div class="chip-list roster-chip-list">
-                          ${group.players.map((player) => `<span class="chip roster-pill">${escapeHtml(player.name)}</span>`).join("")}
-                        </div>
-                      </div>
-                    `,
-                  )
-                  .join("")}</div>`
-              : `<div class="empty-state">${squadsLoading ? "Fetching the official IPL squads for these two teams." : "Once the official IPL team rosters are available, the player dropdowns will fill automatically."}</div>`
-          }
-        </div>
-
-        <div class="panel engine-panel">
-          <div class="section-head">
-            <div>
-              <span class="panel-kicker">Live match engine</span>
-              <h4>Automation status</h4>
-              <p>The match engine keeps the innings clock, squad sync, and final settlement in one place.</p>
+            <div class="match-info-grid">
+              <div class="context-card">
+                <span class="panel-kicker">Sync freshness</span>
+                <strong>${escapeHtml(syncSummary.lastSynced)}</strong>
+                <p>Auto-sync keeps the clock current, but manual Sync is still available for the admin if live data lags.</p>
+              </div>
+              <div class="context-card">
+                <span class="panel-kicker">Availability</span>
+                <strong>${escapeHtml(
+                  canEditScore ? "Score window open" : canEditCore ? "Core picks open" : "All prediction windows locked",
+                )}</strong>
+                <p>${escapeHtml(windowMessage)}</p>
+              </div>
             </div>
-          </div>
-          <div class="chip-list">
-            <span class="chip"><strong>Series</strong>${escapeHtml(match.series_name || "IPL")}</span>
-            <span class="chip"><strong>Auto sync</strong>${match.auto_sync_enabled ? "On" : "Off"}</span>
-            <span class="chip"><strong>Provider ID</strong>${escapeHtml(match.external_match_id || "Manual match")}</span>
-            <span class="chip"><strong>First innings clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
-          </div>
-          <p class="footnote">
-            The 3.1 and 7.1 over locks use the provider's first-innings ball count whenever it is available. Creator controls below can correct the shared match engine, but prediction locks still apply to everyone once they close.
-          </p>
-        </div>
-      </div>
+          </section>
 
-      ${
-        scoreResult
-          ? `
-            <div class="panel result-ribbon">
+          <section class="panel prediction-board" id="picks-board-panel">
+            <div class="section-head">
+              <div>
+                <span class="panel-kicker">Locked by others</span>
+                <h4>Taken picks</h4>
+                <p>See claimed pairs and score calls without leaving the match centre.</p>
+              </div>
+            </div>
+            ${
+              entries.length
+                ? `<div class="entry-list">${entries.map((entry) => renderPredictionRow(entry)).join("")}</div>`
+                : `<div class="empty-state">No one has posted yet.</div>`
+            }
+          </section>
+
+          <div class="grid-2 roster-engine-grid">
+            <section class="panel roster-panel" id="squad-panel">
               <div class="section-head">
                 <div>
-                  <span class="panel-kicker">Result archive</span>
-                  <h4>Scored result</h4>
-                  <p>Points have been calculated automatically for this match.</p>
+                  <span class="panel-kicker">Selection pool</span>
+                  <h4>Official squads</h4>
+                  <p>${hasSquad ? "Player picks use the official IPL squads. Final points still come only from the match scorecard." : squadsLoading ? "Official IPL team rosters are loading now." : "Official IPL team rosters are not available yet for this fixture."}</p>
+                </div>
+              </div>
+              ${
+                hasSquad
+                  ? `<div class="roster-grid">${squadGroups
+                      .map(
+                        (group) => `
+                          <div class="team-block roster-card">
+                            <div class="roster-card-head">
+                              <span class="arena-team-badge">${escapeHtml(getTeamShortCode(group.teamName))}</span>
+                              <strong>${escapeHtml(group.teamName)}</strong>
+                            </div>
+                            <div class="chip-list roster-chip-list">
+                              ${group.players.map((player) => `<span class="chip roster-pill">${escapeHtml(player.name)}</span>`).join("")}
+                            </div>
+                          </div>
+                        `,
+                      )
+                      .join("")}</div>`
+                  : `<div class="empty-state">${squadsLoading ? "Fetching the official IPL squads for these two teams." : "Once the official IPL team rosters are available, the player dropdowns will fill automatically."}</div>`
+              }
+            </section>
+
+            <section class="panel engine-panel" id="engine-panel">
+              <div class="section-head">
+                <div>
+                  <span class="panel-kicker">Automation</span>
+                  <h4>Match engine</h4>
+                  <p>The clock, squad sync, and final settlement all run from the same live engine.</p>
                 </div>
               </div>
               <div class="chip-list">
-                <span class="chip"><strong>Winner</strong>${escapeHtml(scoreResult.winner_team)}</span>
-                <span class="chip"><strong>1st innings total</strong>${escapeHtml(scoreResult.first_innings_total)}</span>
-                <span class="chip"><strong>Tracked batsmen</strong>${Object.keys(scoreResult.batsman_runs || {}).length}</span>
-                <span class="chip"><strong>Tracked bowlers</strong>${Object.keys(scoreResult.bowler_wickets || {}).length}</span>
+                <span class="chip"><strong>Series</strong>${escapeHtml(match.series_name || "IPL")}</span>
+                <span class="chip"><strong>Auto sync</strong>${match.auto_sync_enabled ? "On" : "Off"}</span>
+                <span class="chip"><strong>Provider ID</strong>${escapeHtml(match.external_match_id || "Manual match")}</span>
+                <span class="chip"><strong>1st innings clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
               </div>
-              ${
-                scoreResult.notes
-                  ? `<p class="footnote">${escapeHtml(scoreResult.notes)}</p>`
-                  : ""
-              }
-            </div>
-          `
-          : !isAdmin
-            ? `<div class="notice notice-info">This match will settle automatically once the completed scorecard arrives.</div>`
-            : ""
-      }
+              <p class="footnote">
+                The 3.1 and 7.1 locks use the official first-innings ball count whenever it is available. Admin tools can correct the shared match engine, but once a window closes it closes for everyone.
+              </p>
+            </section>
+          </div>
+
+          ${
+            scoreResult
+              ? `
+                <section class="panel result-ribbon" id="result-panel">
+                  <div class="section-head">
+                    <div>
+                      <span class="panel-kicker">Result archive</span>
+                      <h4>Scored result</h4>
+                      <p>Points have been calculated automatically for this match.</p>
+                    </div>
+                  </div>
+                  <div class="chip-list">
+                    <span class="chip"><strong>Winner</strong>${escapeHtml(scoreResult.winner_team)}</span>
+                    <span class="chip"><strong>1st innings total</strong>${escapeHtml(scoreResult.first_innings_total)}</span>
+                    <span class="chip"><strong>Tracked batsmen</strong>${Object.keys(scoreResult.batsman_runs || {}).length}</span>
+                    <span class="chip"><strong>Tracked bowlers</strong>${Object.keys(scoreResult.bowler_wickets || {}).length}</span>
+                  </div>
+                  ${
+                    scoreResult.notes
+                      ? `<p class="footnote">${escapeHtml(scoreResult.notes)}</p>`
+                      : ""
+                  }
+                </section>
+              `
+              : !isAdmin
+                ? `<div class="notice notice-info">This match will settle automatically once the completed scorecard arrives.</div>`
+                : ""
+          }
+        </div>
+      </section>
     </section>
   `;
 }
@@ -3901,6 +4043,12 @@ async function handleClick(event) {
       scrollPredictionPanelIntoView();
       return;
     }
+
+    if (action === "jump-match-panel") {
+      const panelId = target.getAttribute("data-panel-id");
+      scrollPanelIntoView(panelId);
+      return;
+    }
   } catch (error) {
     console.error(error);
     flash(error.message || "Action failed.", "error");
@@ -4135,8 +4283,16 @@ function getSelectedMatch() {
 }
 
 function scrollPredictionPanelIntoView() {
+  scrollPanelIntoView("prediction-panel");
+}
+
+function scrollPanelIntoView(panelId) {
+  if (!panelId) {
+    return;
+  }
+
   window.requestAnimationFrame(() => {
-    document.getElementById("prediction-panel")?.scrollIntoView({
+    document.getElementById(panelId)?.scrollIntoView({
       behavior: "smooth",
       block: "start",
     });
