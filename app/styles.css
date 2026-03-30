@@ -351,6 +351,11 @@ button {
   border-color: rgba(114, 242, 201, 0.28);
 }
 
+.notice-warning {
+  background: rgba(255, 184, 77, 0.12);
+  border-color: rgba(255, 184, 77, 0.26);
+}
+
 .notice-error {
   background: rgba(255, 118, 118, 0.12);
   border-color: rgba(255, 118, 118, 0.28);
@@ -472,12 +477,33 @@ button {
   padding: 8px 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.07);
+  border: 1px solid transparent;
   color: var(--text-dim);
   font-size: 0.92rem;
 }
 
 .chip strong {
   color: var(--text);
+}
+
+.chip.is-fresh,
+.chip.is-settled {
+  background: rgba(114, 242, 201, 0.12);
+  border-color: rgba(114, 242, 201, 0.24);
+  color: #d7fff2;
+}
+
+.chip.is-warm,
+.chip.is-finalizing {
+  background: rgba(255, 184, 77, 0.13);
+  border-color: rgba(255, 184, 77, 0.24);
+  color: #ffe2b6;
+}
+
+.chip.is-stale {
+  background: rgba(255, 118, 118, 0.13);
+  border-color: rgba(255, 118, 118, 0.24);
+  color: #ffc5c5;
 }
 
 .btn,
@@ -577,6 +603,11 @@ button {
 .tag-completed {
   background: rgba(114, 242, 201, 0.14);
   color: var(--mint);
+}
+
+.tag-finalizing {
+  background: rgba(255, 184, 77, 0.16);
+  color: #ffd79b;
 }
 
 .tag-admin {
@@ -1734,9 +1765,34 @@ body[data-theme="light"] .notice-success {
   border-color: rgba(13, 127, 138, 0.22);
 }
 
+body[data-theme="light"] .notice-warning {
+  background: rgba(217, 138, 18, 0.12);
+  border-color: rgba(217, 138, 18, 0.2);
+}
+
 body[data-theme="light"] .notice-error {
   background: rgba(211, 77, 79, 0.12);
   border-color: rgba(211, 77, 79, 0.18);
+}
+
+body[data-theme="light"] .chip.is-fresh,
+body[data-theme="light"] .chip.is-settled {
+  background: rgba(13, 127, 138, 0.1);
+  border-color: rgba(13, 127, 138, 0.18);
+  color: #0b5f66;
+}
+
+body[data-theme="light"] .chip.is-warm,
+body[data-theme="light"] .chip.is-finalizing {
+  background: rgba(217, 138, 18, 0.12);
+  border-color: rgba(217, 138, 18, 0.18);
+  color: #8d4f08;
+}
+
+body[data-theme="light"] .chip.is-stale {
+  background: rgba(211, 77, 79, 0.12);
+  border-color: rgba(211, 77, 79, 0.18);
+  color: #9c2b2d;
 }
 
 body[data-theme="light"] .field input,
@@ -2749,6 +2805,11 @@ body[data-theme="light"] .match-rail-item.active {
 
 .match-command-state-pill.is-locked {
   border-color: rgba(255, 184, 77, 0.24);
+}
+
+.match-command-state-pill.is-warning {
+  border-color: rgba(255, 184, 77, 0.34);
+  background: rgba(255, 184, 77, 0.1);
 }
 
 .match-command-state-pill span {

@@ -1204,7 +1204,7 @@ function shouldProbeVisibleMatch(match) {
   }
 
   const status = computeMatchStatus(match);
-  if (!["live", "locked"].includes(status)) {
+  if (!["live", "locked", "finalizing"].includes(status)) {
     return false;
   }
 
@@ -1614,6 +1614,7 @@ function renderNotice() {
   const noticeMeta = {
     info: { label: "Heads up", icon: "i" },
     success: { label: "Saved", icon: "✓" },
+    warning: { label: "Heads up", icon: "!" },
     error: { label: "Check this", icon: "!" },
   }[tone] || { label: "Notice", icon: "i" };
 
@@ -2054,6 +2055,50 @@ function renderMiniFixtureRow(match) {
       <span class="tag tag-${status}">${escapeHtml(labelizeStatus(status))}</span>
     </a>
   `;
+}
+
+function renderInlineNotice(tone, title, message) {
+  const noticeMeta = {
+    info: { icon: "i" },
+    success: { icon: "✓" },
+    warning: { icon: "!" },
+    error: { icon: "!" },
+  }[tone] || { icon: "i" };
+
+  return `
+    <div class="notice notice-${escapeHtml(tone)}">
+      <span class="notice-mark">${escapeHtml(noticeMeta.icon)}</span>
+      <div class="notice-copy">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(message)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderMatchStateNotice(match, syncSummary, isAdmin) {
+  const status = computeMatchStatus(match);
+
+  if (status === "finalizing") {
+    return renderInlineNotice(
+      "warning",
+      "Result finalizing",
+      `${syncSummary.settlementDetail}${isAdmin ? " Use Sync now if this takes longer than expected." : ""}`,
+    );
+  }
+
+  if (
+    syncSummary.freshnessTone === "stale" &&
+    ["live", "locked", "finalizing"].includes(status)
+  ) {
+    return renderInlineNotice(
+      "warning",
+      "Live feed looks stale",
+      `${syncSummary.freshnessDetail}${isAdmin ? " You can use Sync now to force a refresh." : " Ask your admin to refresh if the clock still looks stuck."}`,
+    );
+  }
+
+  return "";
 }
 
 function renderMatchesPage(route) {
@@ -3000,7 +3045,7 @@ function renderDashboard() {
           <div class="mini-panel spotlight-panel">
             <span class="panel-kicker">${focusMatch ? "Focus match" : "Next match"}</span>
             <strong>${escapeHtml(focusMatch?.title || "Sync the season to load fixtures")}</strong>
-            <p>${focusMatch ? `${escapeHtml(formatDate(focusMatch.starts_at))} · ${escapeHtml(computeMatchStatus(focusMatch))}` : "Once fixtures are synced, each match becomes a single-click room for picks and score calls."}</p>
+            <p>${focusMatch ? `${escapeHtml(formatDate(focusMatch.starts_at))} · ${escapeHtml(labelizeStatus(computeMatchStatus(focusMatch)))}` : "Once fixtures are synced, each match becomes a single-click room for picks and score calls."}</p>
           </div>
         </div>
       </section>
@@ -3096,6 +3141,8 @@ function renderMatchCard(match) {
     ? "Player picks open"
     : liveWindow.scoreWindowOpen
       ? "Score phase open"
+      : status === "finalizing"
+        ? "Result finalizing"
       : matchResult
         ? "Scored"
         : "Locked";
@@ -3159,6 +3206,8 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
   const canEditScore = !leagueEnded && liveWindow.scoreWindowOpen;
   const windowMessage = leagueEnded
     ? "This league has ended. Picks stay visible, but no more changes can be made."
+    : status === "finalizing"
+      ? "This match has finished on the field. Official scoring is still finalizing, so picks stay read-only while points land."
     : liveWindow.coreWindowOpen
       ? "Choose one batsman, one bowler, and one winning team before 3.1 overs. Score unlocks right after that."
       : liveWindow.scoreWindowOpen
@@ -3221,6 +3270,8 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
             <span class="chip"><strong>Live</strong>${escapeHtml(syncSummary.liveClock)}</span>
             <span class="chip"><strong>Core</strong>${escapeHtml(formatCoreLockLabel(match, liveWindow))}</span>
             <span class="chip"><strong>Score</strong>${escapeHtml(formatScoreLockLabel(match, liveWindow))}</span>
+            <span class="chip is-${escapeAttribute(syncSummary.freshnessTone)}"><strong>Freshness</strong>${escapeHtml(syncSummary.freshnessLabel)}</span>
+            <span class="chip is-${escapeAttribute(syncSummary.settlementTone)}"><strong>Settlement</strong>${escapeHtml(syncSummary.settlementLabel)}</span>
             <span class="chip"><strong>Last synced</strong>${escapeHtml(syncSummary.lastSynced)}</span>
             <span class="chip"><strong>Picks posted</strong>${escapeHtml(entries.length)}</span>
             <span class="chip"><strong>Venue</strong>${escapeHtml(match.venue || "Venue TBD")}</span>
@@ -3250,6 +3301,10 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
               <span>Score call</span>
               <strong>${canEditScore ? "Open" : liveWindow.scoreLocked ? "Locked" : "Waiting"}</strong>
             </div>
+            <div class="match-command-state-pill ${syncSummary.settlementTone === "fresh" ? "is-live" : syncSummary.settlementTone === "finalizing" ? "is-warning" : ""}">
+              <span>Result</span>
+              <strong>${escapeHtml(syncSummary.settlementLabel)}</strong>
+            </div>
           </div>
         </aside>
       </section>
@@ -3264,6 +3319,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           ? `<div class="notice notice-error">${escapeHtml(match.sync_error)}</div>`
           : ""
       }
+      ${renderMatchStateNotice(match, syncSummary, isAdmin)}
 
       <section class="match-command-layout">
         <aside class="panel entry-shell prediction-dock" id="prediction-panel">
@@ -3400,15 +3456,26 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
             <div class="match-info-grid">
               <div class="context-card">
                 <span class="panel-kicker">Sync freshness</span>
-                <strong>${escapeHtml(syncSummary.lastSynced)}</strong>
-                <p>Auto-sync keeps the clock current, but manual Sync is still available for the admin if live data lags.</p>
+                <strong>${escapeHtml(syncSummary.freshnessLabel)}</strong>
+                <p>${escapeHtml(`${syncSummary.freshnessDetail} Last synced ${syncSummary.lastSynced}.`)}</p>
               </div>
               <div class="context-card">
                 <span class="panel-kicker">Availability</span>
                 <strong>${escapeHtml(
-                  canEditScore ? "Score window open" : canEditCore ? "Core picks open" : "All prediction windows locked",
+                  status === "finalizing"
+                    ? "Match finished"
+                    : canEditScore
+                      ? "Score window open"
+                      : canEditCore
+                        ? "Core picks open"
+                        : "All prediction windows locked",
                 )}</strong>
                 <p>${escapeHtml(windowMessage)}</p>
+              </div>
+              <div class="context-card">
+                <span class="panel-kicker">Settlement</span>
+                <strong>${escapeHtml(syncSummary.settlementLabel)}</strong>
+                <p>${escapeHtml(syncSummary.settlementDetail)}</p>
               </div>
             </div>
           </section>
@@ -3648,7 +3715,7 @@ function renderAdminTools(match) {
                           ${match.auto_sync_enabled ? "Pause auto sync" : "Resume auto sync"}
                         </button>
                         <button class="ghost-btn" type="button" data-action="calculate-match-points" data-match-id="${match.id}" ${
-                          state.settlingMatchIds.has(match.id) || selectedMatchStatus !== "completed"
+                          state.settlingMatchIds.has(match.id) || !isFinishedMatchStatus(selectedMatchStatus)
                             ? "disabled"
                             : ""
                         }>${
@@ -3660,7 +3727,7 @@ function renderAdminTools(match) {
                         }</button>
                       </div>
                       ${
-                        selectedMatchStatus === "completed"
+                        isFinishedMatchStatus(selectedMatchStatus)
                           ? `<span class="subtle">Use this if the match has finished but the leaderboard has not updated yet. It re-runs point allocation from the official IPL scorecard.</span>`
                           : ""
                       }
@@ -4010,7 +4077,7 @@ async function savePrediction(form) {
     throw new Error("Submit batsman, bowler, and winning team together.");
   }
 
-  if (match && computeMatchStatus(match) === "completed") {
+  if (match && isFinishedMatchStatus(computeMatchStatus(match))) {
     throw new Error("This match is already completed.");
   }
 
@@ -4870,8 +4937,20 @@ function getCurrentUserPrediction(matchId) {
   );
 }
 
+function isMatchFinalizing(match) {
+  return Boolean(match?.status === "completed" && !getMatchResult(match));
+}
+
+function isMatchSettled(match) {
+  return Boolean(getMatchResult(match));
+}
+
+function isFinishedMatchStatus(status) {
+  return status === "completed" || status === "finalizing";
+}
+
 function computeMatchStatus(match) {
-  if (getMatchResult(match)) {
+  if (isMatchSettled(match)) {
     return "completed";
   }
 
@@ -4879,8 +4958,8 @@ function computeMatchStatus(match) {
     return "cancelled";
   }
 
-  if (match.status === "completed") {
-    return "completed";
+  if (isMatchFinalizing(match)) {
+    return "finalizing";
   }
 
   const liveWindow = getLiveWindowState(match, null);
@@ -4901,6 +4980,10 @@ function computeMatchStatus(match) {
 function labelizeStatus(status) {
   if (!status) {
     return "Scheduled";
+  }
+
+  if (status === "finalizing") {
+    return "Finalizing";
   }
 
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -4929,7 +5012,11 @@ function getLeagueFocusMatch() {
     return selected;
   }
 
-  return state.matches.find((match) => computeMatchStatus(match) === "live")
+  return state.matches.find((match) => {
+    const status = computeMatchStatus(match);
+    return status === "live" || status === "locked";
+  })
+    || state.matches.find((match) => computeMatchStatus(match) === "finalizing")
     || state.matches.find((match) => {
       const startsAt = match?.starts_at ? new Date(match.starts_at).getTime() : null;
       return startsAt && startsAt >= Date.now();
@@ -4939,7 +5026,7 @@ function getLeagueFocusMatch() {
 }
 
 function getCompletedMatchCount() {
-  return state.matches.filter((match) => computeMatchStatus(match) === "completed").length;
+  return state.matches.filter((match) => isFinishedMatchStatus(computeMatchStatus(match))).length;
 }
 
 function getLeaguePulseCopy(leagueEnded, leader, focusMatch) {
@@ -4951,6 +5038,10 @@ function getLeaguePulseCopy(leagueEnded, leader, focusMatch) {
     const status = computeMatchStatus(focusMatch);
     if (status === "live" || status === "locked") {
       return `${focusMatch.team_a} vs ${focusMatch.team_b} is the pressure point right now. Picks, score windows, and auto-scoring all revolve around this fixture.`;
+    }
+
+    if (status === "finalizing") {
+      return `${focusMatch.team_a} vs ${focusMatch.team_b} has finished on the field. The official scorecard is still settling, so points will land as soon as that write completes.`;
     }
 
     return `${focusMatch.team_a} vs ${focusMatch.team_b} is the next big decision. Players can see the full squad early, then the 3.1 and 7.1 locks keep the round fair.`;
@@ -4967,6 +5058,10 @@ function getHeroStatusLabel(focusMatch) {
   const status = computeMatchStatus(focusMatch);
   if (status === "live" || status === "locked") {
     return "Match in motion";
+  }
+
+  if (status === "finalizing") {
+    return "Result finalizing";
   }
 
   if (status === "completed") {
@@ -5524,6 +5619,53 @@ function getMatchSyncSummary(match) {
         : match?.external_match_id
           ? "Official IPL"
           : "Manual";
+  const status = computeMatchStatus(match);
+  const syncedAt = match?.last_synced_at ? new Date(match.last_synced_at).getTime() : null;
+  const syncAgeMs = syncedAt && !Number.isNaN(syncedAt) ? Math.max(0, Date.now() - syncedAt) : null;
+  const activeWindow = status === "live" || status === "locked" || status === "finalizing";
+  const freshnessThresholdMs = activeWindow ? 25 * 1000 : 2 * 60 * 1000;
+  const warmThresholdMs = activeWindow ? 90 * 1000 : 10 * 60 * 1000;
+
+  let freshnessLabel = match?.external_match_id ? "Waiting for sync" : "Manual update";
+  let freshnessTone = match?.external_match_id ? "stale" : "manual";
+  let freshnessDetail = match?.external_match_id
+    ? "No live provider update has landed yet."
+    : "This fixture is controlled manually, so there is no live feed freshness to report.";
+
+  if (syncAgeMs !== null) {
+    const ageLabel = formatRelativeAge(syncAgeMs);
+    if (syncAgeMs <= freshnessThresholdMs) {
+      freshnessLabel = "Fresh now";
+      freshnessTone = "fresh";
+      freshnessDetail = `Live data updated ${ageLabel}.`;
+    } else if (syncAgeMs <= warmThresholdMs) {
+      freshnessLabel = activeWindow ? "Watching feed" : "Recently synced";
+      freshnessTone = "warm";
+      freshnessDetail = `Latest provider update landed ${ageLabel}.`;
+    } else {
+      freshnessLabel = "Sync stale";
+      freshnessTone = "stale";
+      freshnessDetail = `The last provider update was ${ageLabel}.`;
+    }
+  }
+
+  let settlementLabel = "Awaiting finish";
+  let settlementTone = "warm";
+  let settlementDetail = "Points settle automatically once the official completed scorecard lands.";
+
+  if (isMatchSettled(match)) {
+    settlementLabel = "Settled";
+    settlementTone = "fresh";
+    settlementDetail = "Official results are written and the leaderboard is ready.";
+  } else if (status === "finalizing") {
+    settlementLabel = "Finalizing";
+    settlementTone = "finalizing";
+    settlementDetail = "The match has finished, but the official result is still being written into league scoring.";
+  } else if (status === "cancelled") {
+    settlementLabel = "Cancelled";
+    settlementTone = "stale";
+    settlementDetail = "This fixture is cancelled, so no settlement will run.";
+  }
 
   return {
     source: sourceLabel,
@@ -5540,6 +5682,12 @@ function getMatchSyncSummary(match) {
         ? "Innings started"
         : "Not started",
     lastSynced: formatDate(match?.last_synced_at) || "Not synced yet",
+    freshnessLabel,
+    freshnessTone,
+    freshnessDetail,
+    settlementLabel,
+    settlementTone,
+    settlementDetail,
   };
 }
 
@@ -7584,6 +7732,33 @@ function formatDate(value, mode = "full") {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatRelativeAge(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
+    return "just now";
+  }
+
+  if (milliseconds < 15 * 1000) {
+    return "just now";
+  }
+
+  const seconds = Math.round(milliseconds / 1000);
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) {
+    return `${hours}h ago`;
+  }
+
+  return `${Math.round(hours / 24)}d ago`;
 }
 
 function flash(message, tone = "info") {
