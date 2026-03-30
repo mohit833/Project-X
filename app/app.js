@@ -27,6 +27,7 @@ const state = {
   reloadTimer: null,
   autoSyncTimer: null,
   autoSyncBusy: false,
+  lastAutoSyncKickAt: 0,
   providerFixtures: [],
   loadingProviderFixtures: false,
   syncingMatchIds: new Set(),
@@ -54,6 +55,7 @@ const DEMO_USER_ID = "demo-user";
 const DEMO_LEAGUE_ID = "demo-league";
 const MIN_OFFICIAL_TEAM_SQUAD_SIZE = 11;
 const TEAM_SQUAD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
+const AUTO_SYNC_RESUME_THROTTLE_MS = 15 * 1000;
 const DEMO_MATCHES = [
   {
     id: "match-1",
@@ -356,9 +358,13 @@ document.addEventListener("submit", handleSubmit);
 document.addEventListener("click", handleClick);
 document.addEventListener("change", handleChange);
 document.addEventListener("input", handleInput);
+document.addEventListener("visibilitychange", handleAutoSyncVisibilityChange);
 window.addEventListener("hashchange", handleHashChange);
 window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
 window.addEventListener("appinstalled", handleAppInstalled);
+window.addEventListener("focus", handleAutoSyncResume);
+window.addEventListener("pageshow", handleAutoSyncResume);
+window.addEventListener("online", handleAutoSyncResume);
 
 registerServiceWorker();
 applyTheme();
@@ -982,10 +988,9 @@ function setupAutoSync() {
   }
 
   const intervalMs = Math.max(Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 90000, 30000);
+  requestAutoSync({ force: true });
   state.autoSyncTimer = window.setInterval(() => {
-    syncTrackedMatches({ quiet: true }).catch((error) => {
-      console.error(error);
-    });
+    requestAutoSync();
   }, intervalMs);
 }
 
@@ -994,6 +999,44 @@ function teardownAutoSync() {
     window.clearInterval(state.autoSyncTimer);
     state.autoSyncTimer = null;
   }
+
+  state.lastAutoSyncKickAt = 0;
+}
+
+function canAutoSyncMatches() {
+  if (!state.user || currentMembership()?.role !== "admin" || state.demoMode) {
+    return false;
+  }
+
+  return state.matches.some(shouldAutoSyncMatch);
+}
+
+function requestAutoSync({ force = false } = {}) {
+  if (!canAutoSyncMatches() || state.autoSyncBusy) {
+    return;
+  }
+
+  const now = Date.now();
+  if (!force && now - state.lastAutoSyncKickAt < AUTO_SYNC_RESUME_THROTTLE_MS) {
+    return;
+  }
+
+  state.lastAutoSyncKickAt = now;
+  syncTrackedMatches({ quiet: true }).catch((error) => {
+    console.error(error);
+  });
+}
+
+function handleAutoSyncVisibilityChange() {
+  if (document.hidden) {
+    return;
+  }
+
+  requestAutoSync({ force: true });
+}
+
+function handleAutoSyncResume() {
+  requestAutoSync({ force: true });
 }
 
 function scheduleLeagueReload() {
