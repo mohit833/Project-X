@@ -100,6 +100,9 @@ const state = {
   loading: false,
   realtimeChannel: null,
   reloadTimer: null,
+  leagueRefreshTimer: null,
+  leagueRefreshBusy: false,
+  lastLeagueRefreshKickAt: 0,
   autoSyncTimer: null,
   autoSyncBusy: false,
   lastAutoSyncKickAt: 0,
@@ -132,9 +135,10 @@ const DEMO_USER_ID = "demo-user";
 const DEMO_LEAGUE_ID = "demo-league";
 const MIN_OFFICIAL_TEAM_SQUAD_SIZE = 11;
 const TEAM_SQUAD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
+const LEAGUE_REFRESH_THROTTLE_MS = 10 * 1000;
 const AUTO_SYNC_RESUME_THROTTLE_MS = 15 * 1000;
-const MATCH_STATUS_PROBE_STALE_MS = 2 * 60 * 1000;
-const MATCH_STATUS_PROBE_THROTTLE_MS = 60 * 1000;
+const MATCH_STATUS_PROBE_STALE_MS = 10 * 1000;
+const MATCH_STATUS_PROBE_THROTTLE_MS = 10 * 1000;
 const DEMO_MATCHES = [
   {
     id: "match-1",
@@ -755,6 +759,7 @@ async function loadMemberships() {
     state.leaderboard = [];
     state.providerFixtures = [];
     teardownRealtime();
+    teardownLeagueRefresh();
     teardownAutoSync();
     return;
   }
@@ -836,12 +841,14 @@ async function loadLeagueBundle() {
 
   if (!state.matches.length) {
     teardownRealtime();
+    teardownLeagueRefresh();
     teardownAutoSync();
     render();
     return;
   }
 
   setupRealtime(leagueId);
+  setupLeagueRefresh();
   setupAutoSync();
 }
 
@@ -1077,11 +1084,34 @@ function setupAutoSync() {
     return;
   }
 
-  const intervalMs = Math.max(Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 90000, 30000);
+  const intervalMs = getSyncPollingIntervalMs();
   requestAutoSync({ force: true });
   state.autoSyncTimer = window.setInterval(() => {
     requestAutoSync();
   }, intervalMs);
+}
+
+function setupLeagueRefresh() {
+  teardownLeagueRefresh();
+
+  if (!state.user || !state.activeLeagueId || state.demoMode) {
+    return;
+  }
+
+  const intervalMs = getSyncPollingIntervalMs();
+  state.leagueRefreshTimer = window.setInterval(() => {
+    requestLeagueRefresh();
+  }, intervalMs);
+}
+
+function teardownLeagueRefresh() {
+  if (state.leagueRefreshTimer) {
+    window.clearInterval(state.leagueRefreshTimer);
+    state.leagueRefreshTimer = null;
+  }
+
+  state.leagueRefreshBusy = false;
+  state.lastLeagueRefreshKickAt = 0;
 }
 
 function teardownAutoSync() {
@@ -1099,6 +1129,39 @@ function canAutoSyncMatches() {
   }
 
   return state.matches.some(shouldAutoSyncMatch);
+}
+
+function canRefreshLeagueBundle() {
+  return Boolean(state.user && state.activeLeagueId && !state.demoMode && state.client);
+}
+
+function getSyncPollingIntervalMs() {
+  return Math.max(Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 10000, 10000);
+}
+
+function requestLeagueRefresh({ force = false } = {}) {
+  if (!canRefreshLeagueBundle() || state.leagueRefreshBusy) {
+    return;
+  }
+
+  const now = Date.now();
+  if (!force && now - state.lastLeagueRefreshKickAt < LEAGUE_REFRESH_THROTTLE_MS) {
+    return;
+  }
+
+  state.lastLeagueRefreshKickAt = now;
+  state.leagueRefreshBusy = true;
+
+  loadLeagueBundle()
+    .then(() => {
+      render();
+    })
+    .catch((error) => {
+      console.error(error);
+    })
+    .finally(() => {
+      state.leagueRefreshBusy = false;
+    });
 }
 
 function requestAutoSync({ force = false } = {}) {
@@ -1122,10 +1185,12 @@ function handleAutoSyncVisibilityChange() {
     return;
   }
 
+  requestLeagueRefresh({ force: true });
   requestAutoSync({ force: true });
 }
 
 function handleAutoSyncResume() {
+  requestLeagueRefresh({ force: true });
   requestAutoSync({ force: true });
 }
 
