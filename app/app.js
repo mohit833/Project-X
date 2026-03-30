@@ -4,6 +4,81 @@ const root = document.getElementById("app");
 const THEME_STORAGE_KEY = "ipl-theme-mode-v2";
 const MATCH_ROUTE_SECTIONS = new Set(["fixtures", "centre", "picks", "admin"]);
 const PRIMARY_ROUTE_PAGES = new Set(["home", "matches", "standings", "league", "account"]);
+const TEAM_BRANDS = {
+  "chennai-super-kings": {
+    short: "CSK",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/CSK.png",
+    primary: "#f7b718",
+    secondary: "#184ea1",
+    accent: "#ffedb3",
+  },
+  "delhi-capitals": {
+    short: "DC",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/DC.png",
+    primary: "#1457c1",
+    secondary: "#ef3e36",
+    accent: "#a8d4ff",
+  },
+  "gujarat-titans": {
+    short: "GT",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/GT.png",
+    primary: "#1d2747",
+    secondary: "#d6ad5c",
+    accent: "#91a6dd",
+  },
+  "kolkata-knight-riders": {
+    short: "KKR",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/KKR.png",
+    primary: "#48236f",
+    secondary: "#d4ad47",
+    accent: "#c8a7ff",
+  },
+  "lucknow-super-giants": {
+    short: "LSG",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/LSG.png",
+    primary: "#07a7e3",
+    secondary: "#ff8f3d",
+    accent: "#9de8ff",
+  },
+  "mumbai-indians": {
+    short: "MI",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/MI.png",
+    primary: "#005da8",
+    secondary: "#d6a437",
+    accent: "#8ce1ff",
+  },
+  "punjab-kings": {
+    short: "PBKS",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/PBKS.png",
+    primary: "#d71920",
+    secondary: "#d8d8d8",
+    accent: "#ffb0b3",
+  },
+  "rajasthan-royals": {
+    short: "RR",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/RR.png",
+    primary: "#eb1c8d",
+    secondary: "#1b4ca1",
+    accent: "#ffc1e6",
+  },
+  "royal-challengers-bengaluru": {
+    short: "RCB",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/RCB.png",
+    primary: "#c22033",
+    secondary: "#111111",
+    accent: "#ffb2c2",
+  },
+  "sunrisers-hyderabad": {
+    short: "SRH",
+    logo: "https://scores.iplt20.com/ipl/teamlogos/SRH.png",
+    primary: "#f37021",
+    secondary: "#2b0f0b",
+    accent: "#ffd0a8",
+  },
+};
+const TEAM_BRAND_ALIASES = {
+  "royal-challengers-bangalore": "royal-challengers-bengaluru",
+};
 
 const state = {
   appName: APP_CONFIG.APP_NAME || "IPL Prediction League",
@@ -1777,16 +1852,28 @@ function renderCompactFixturePanel() {
 }
 
 function renderMiniFixtureRow(match) {
+  const status = computeMatchStatus(match);
+
   return `
     <a class="mini-fixture-row" href="${buildRouteHref({ page: "matches", section: "centre", matchId: match.id })}">
-      <div>
-        <strong>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</strong>
+      <div class="mini-fixture-copy">
+        <div class="mini-fixture-clash">
+          <span class="mini-fixture-team">
+            ${renderTeamMark(match.team_a, "xs")}
+            <strong>${escapeHtml(getTeamShortCode(match.team_a))}</strong>
+          </span>
+          <span class="mini-fixture-divider">vs</span>
+          <span class="mini-fixture-team mini-fixture-team-away">
+            ${renderTeamMark(match.team_b, "xs")}
+            <strong>${escapeHtml(getTeamShortCode(match.team_b))}</strong>
+          </span>
+        </div>
         <div class="entry-meta">
           <span class="subtle">${escapeHtml(formatFixtureDayLabel(match.starts_at))}</span>
           <span class="subtle">${escapeHtml(match.venue || "Venue TBD")}</span>
         </div>
       </div>
-      <span class="tag tag-${computeMatchStatus(match)}">${escapeHtml(labelizeStatus(computeMatchStatus(match)))}</span>
+      <span class="tag tag-${status}">${escapeHtml(labelizeStatus(status))}</span>
     </a>
   `;
 }
@@ -1979,8 +2066,11 @@ function renderFixtureTimelineCard(match) {
 function renderFixtureTeamBlock(teamName) {
   return `
     <div class="fixture-team-block">
-      <span class="fixture-team-badge">${escapeHtml(getTeamShortCode(teamName))}</span>
-      <strong>${escapeHtml(teamName)}</strong>
+      ${renderTeamMark(teamName, "lg")}
+      <div class="fixture-team-copy">
+        <strong>${escapeHtml(teamName)}</strong>
+        <span>${escapeHtml(getTeamShortCode(teamName))}</span>
+      </div>
     </div>
   `;
 }
@@ -2002,7 +2092,19 @@ function renderMatchRail(section, layout = "stack") {
               data-section="${escapeAttribute(section)}"
               data-match-id="${match.id}"
             >
-              <span class="match-rail-title">${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</span>
+              <span class="match-rail-title">
+                <span class="match-rail-clash">
+                  <span class="mini-fixture-team">
+                    ${renderTeamMark(match.team_a, "xs")}
+                    <strong>${escapeHtml(getTeamShortCode(match.team_a))}</strong>
+                  </span>
+                  <span class="mini-fixture-divider">vs</span>
+                  <span class="mini-fixture-team mini-fixture-team-away">
+                    ${renderTeamMark(match.team_b, "xs")}
+                    <strong>${escapeHtml(getTeamShortCode(match.team_b))}</strong>
+                  </span>
+                </span>
+              </span>
               <span class="match-rail-meta">${escapeHtml(formatFixtureDayLabel(match.starts_at))} · ${escapeHtml(labelizeStatus(computeMatchStatus(match)))}</span>
             </button>
           `,
@@ -2061,7 +2163,7 @@ function renderMatchCentreQuickNav(match, isAdmin, hasResult) {
   `;
 }
 
-function renderPredictionSnapshot(prediction) {
+function renderPredictionSnapshot(match, prediction) {
   if (!prediction) {
     return `
       <div class="prediction-snapshot prediction-snapshot-empty">
@@ -2077,28 +2179,51 @@ function renderPredictionSnapshot(prediction) {
 
   return `
     <div class="prediction-snapshot">
-      <div class="entry-item">
-        <div>
-          <strong>${escapeHtml(prediction.batsman_name || "Batsman not set")}</strong>
-          <span class="subtle">Batsman</span>
+      <div class="selection-overview-grid">
+        <div class="selection-pulse-card">
+          <span class="panel-kicker">Batsman</span>
+          <div class="identity-stack">
+            ${renderPlayerAvatar(match, prediction.batsman_name, { size: "md" })}
+            <div class="identity-copy">
+              <strong>${escapeHtml(prediction.batsman_name || "Batsman not set")}</strong>
+              <span class="subtle">Top run pick</span>
+            </div>
+          </div>
         </div>
-        <div class="entry-stats">
-          <strong>${escapeHtml(prediction.team_pick || "Winner not set")}</strong>
-          <span class="subtle">Team pick</span>
+        <div class="selection-pulse-card">
+          <span class="panel-kicker">Bowler</span>
+          <div class="identity-stack">
+            ${renderPlayerAvatar(match, prediction.bowler_name, { size: "md" })}
+            <div class="identity-copy">
+              <strong>${escapeHtml(prediction.bowler_name || "Bowler not set")}</strong>
+              <span class="subtle">Wicket pick</span>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="entry-item">
-        <div>
-          <strong>${escapeHtml(prediction.bowler_name || "Bowler not set")}</strong>
-          <span class="subtle">Bowler</span>
+        <div class="selection-pulse-card">
+          <span class="panel-kicker">Winner</span>
+          <div class="identity-stack">
+            ${renderTeamMark(prediction.team_pick || match?.team_a || "", "sm")}
+            <div class="identity-copy">
+              <strong>${escapeHtml(prediction.team_pick || "Winner not set")}</strong>
+              <span class="subtle">Team pick</span>
+            </div>
+          </div>
         </div>
-        <div class="entry-stats">
-          <strong>${escapeHtml(
-            prediction.predicted_score !== null && prediction.predicted_score !== undefined
-              ? prediction.predicted_score
-              : "Score not set",
-          )}</strong>
-          <span class="subtle">Predicted total</span>
+        <div class="selection-pulse-card">
+          <span class="panel-kicker">Score call</span>
+          <div class="identity-copy">
+            <strong>${escapeHtml(
+              prediction.predicted_score !== null && prediction.predicted_score !== undefined
+                ? prediction.predicted_score
+                : "Score not set",
+            )}</strong>
+            <span class="subtle">${
+              prediction.score_submitted_at
+                ? `Submitted ${escapeHtml(formatDate(prediction.score_submitted_at))}`
+                : "Waiting for score phase"
+            }</span>
+          </div>
         </div>
       </div>
       <div class="chip-list">
@@ -2307,9 +2432,12 @@ function renderMembersPanel(title = "Players") {
               .map(
                 (member) => `
                   <div class="member-item">
-                    <div>
-                      <strong>${escapeHtml(member.display_name)}</strong>
-                      <span class="subtle">Joined ${escapeHtml(formatDate(member.joined_at, "date"))}</span>
+                    <div class="identity-stack">
+                      ${renderMemberAvatar(member.display_name, "sm")}
+                      <div class="identity-copy">
+                        <strong>${escapeHtml(member.display_name)}</strong>
+                        <span class="subtle">Joined ${escapeHtml(formatDate(member.joined_at, "date"))}</span>
+                      </div>
                     </div>
                     <span class="tag ${member.role === "admin" ? "tag-admin" : "tag-member"}">${escapeHtml(member.role)}</span>
                   </div>
@@ -2784,9 +2912,8 @@ function renderMatchCard(match) {
   const status = computeMatchStatus(match);
   const active = match.id === getSelectedMatch()?.id;
   const entries = getPredictionsForMatch(match.id);
+  const myPrediction = getCurrentUserPrediction(match.id);
   const liveWindow = getLiveWindowState(match, getCurrentUserPrediction(match.id));
-  const teamAShort = getTeamShortCode(match.team_a);
-  const teamBShort = getTeamShortCode(match.team_b);
   const availabilityLabel = liveWindow.coreWindowOpen
     ? "Player picks open"
     : liveWindow.scoreWindowOpen
@@ -2794,6 +2921,13 @@ function renderMatchCard(match) {
       : matchResult
         ? "Scored"
         : "Locked";
+  const userStateLabel = myPrediction
+    ? myPrediction.score_submitted_at
+      ? "Ready"
+      : myPrediction.core_submitted_at
+        ? "Core saved"
+        : "Started"
+    : "No pick";
 
   return `
     <button class="match-card ${active ? "active" : ""}" type="button" data-action="select-match" data-match-id="${match.id}">
@@ -2805,18 +2939,18 @@ function renderMatchCard(match) {
       <h4>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h4>
       <div class="fixture-teams">
         <div class="team-token">
-          <span class="team-badge">${escapeHtml(teamAShort)}</span>
+          ${renderTeamMark(match.team_a, "md")}
           <div class="team-token-meta">
             <strong>${escapeHtml(match.team_a)}</strong>
-            <span>${escapeHtml(teamAShort)}</span>
+            <span>${escapeHtml(getTeamShortCode(match.team_a))}</span>
           </div>
         </div>
         <span class="versus-dot">VS</span>
         <div class="team-token team-token-away">
-          <span class="team-badge">${escapeHtml(teamBShort)}</span>
+          ${renderTeamMark(match.team_b, "md")}
           <div class="team-token-meta">
             <strong>${escapeHtml(match.team_b)}</strong>
-            <span>${escapeHtml(teamBShort)}</span>
+            <span>${escapeHtml(getTeamShortCode(match.team_b))}</span>
           </div>
         </div>
       </div>
@@ -2826,7 +2960,7 @@ function renderMatchCard(match) {
       </div>
       <div class="match-card-footer">
         <span class="chip"><strong>${entries.length}</strong>Picks posted</span>
-        <span class="chip"><strong>${escapeHtml(availabilityLabel)}</strong>Live state</span>
+        <span class="chip"><strong>You</strong>${escapeHtml(userStateLabel)}</span>
       </div>
     </button>
   `;
@@ -2845,8 +2979,6 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
   const syncSummary = getMatchSyncSummary(match);
   const canEditCore = !leagueEnded && liveWindow.coreWindowOpen;
   const canEditScore = !leagueEnded && liveWindow.scoreWindowOpen;
-  const teamAShort = getTeamShortCode(match.team_a);
-  const teamBShort = getTeamShortCode(match.team_b);
   const windowMessage = leagueEnded
     ? "This league has ended. Picks stay visible, but no more changes can be made."
     : liveWindow.coreWindowOpen
@@ -2890,18 +3022,20 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           </div>
           <div class="match-command-clash">
             <div class="match-command-team">
-              <span class="arena-team-badge">${escapeHtml(teamAShort)}</span>
+              ${renderTeamMark(match.team_a, "hero")}
               <div>
                 <span class="panel-kicker">Home</span>
                 <strong>${escapeHtml(match.team_a)}</strong>
+                <span class="subtle">${escapeHtml(getTeamShortCode(match.team_a))}</span>
               </div>
             </div>
             <div class="match-command-versus">VS</div>
             <div class="match-command-team match-command-team-away">
-              <span class="arena-team-badge">${escapeHtml(teamBShort)}</span>
+              ${renderTeamMark(match.team_b, "hero")}
               <div>
                 <span class="panel-kicker">Away</span>
                 <strong>${escapeHtml(match.team_b)}</strong>
+                <span class="subtle">${escapeHtml(getTeamShortCode(match.team_b))}</span>
               </div>
             </div>
           </div>
@@ -3056,7 +3190,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                   </div>
                 `
           }
-          ${renderPredictionSnapshot(prediction)}
+          ${renderPredictionSnapshot(match, prediction)}
         </aside>
 
         <div class="match-content-stack">
@@ -3132,11 +3266,20 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                         (group) => `
                           <div class="team-block roster-card">
                             <div class="roster-card-head">
-                              <span class="arena-team-badge">${escapeHtml(getTeamShortCode(group.teamName))}</span>
+                              ${renderTeamMark(group.teamName, "sm")}
                               <strong>${escapeHtml(group.teamName)}</strong>
                             </div>
                             <div class="chip-list roster-chip-list">
-                              ${group.players.map((player) => `<span class="chip roster-pill">${escapeHtml(player.name)}</span>`).join("")}
+                              ${group.players
+                                .map(
+                                  (player) => `
+                                    <span class="chip roster-pill">
+                                      ${renderPlayerAvatar(match, player.name, { size: "xs", teamName: group.teamName })}
+                                      ${escapeHtml(player.name)}
+                                    </span>
+                                  `,
+                                )
+                                .join("")}
                             </div>
                           </div>
                         `,
@@ -3202,22 +3345,57 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
 
 function renderPredictionRow(entry) {
   const sameUser = entry.user_id === state.user?.id;
+  const match = state.matches.find((item) => item.id === entry.match_id) || getSelectedMatch();
+  const ownerName = entry.league_members?.display_name || "Player";
+  const coreStamp = entry.core_submitted_at ? `Core ${formatDate(entry.core_submitted_at)}` : "Core pending";
+  const scoreStamp = entry.score_submitted_at ? `Score ${formatDate(entry.score_submitted_at)}` : "Score pending";
 
   return `
     <div class="entry-item prediction-row ${sameUser ? "current-user" : ""}">
-      <div>
-        <div class="prediction-row-head">
-          <strong>${escapeHtml(entry.league_members?.display_name || "Player")}</strong>
-          ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
+      <div class="prediction-row-main">
+        <div class="prediction-owner">
+          ${renderMemberAvatar(ownerName, "sm")}
+          <div class="identity-copy">
+            <div class="prediction-row-head">
+              <strong>${escapeHtml(ownerName)}</strong>
+              ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
+            </div>
+            <div class="entry-meta">
+              <span class="subtle">${escapeHtml(coreStamp)}</span>
+              <span class="subtle">${escapeHtml(scoreStamp)}</span>
+            </div>
+          </div>
         </div>
-        <div class="entry-meta">
-          <span class="subtle">Pair: ${escapeHtml(entry.batsman_name || "-")} + ${escapeHtml(entry.bowler_name || "-")}</span>
+        <div class="prediction-pair-grid">
+          <div class="player-cardlet">
+            ${renderPlayerAvatar(match, entry.batsman_name, { size: "sm" })}
+            <div class="identity-copy">
+              <span class="subtle">Batsman</span>
+              <strong>${escapeHtml(entry.batsman_name || "-")}</strong>
+            </div>
+          </div>
+          <div class="player-cardlet">
+            ${renderPlayerAvatar(match, entry.bowler_name, { size: "sm" })}
+            <div class="identity-copy">
+              <span class="subtle">Bowler</span>
+              <strong>${escapeHtml(entry.bowler_name || "-")}</strong>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="entry-stats">
-        <strong>${escapeHtml(entry.predicted_score ?? "-")}</strong>
-        <div class="entry-meta">
-          <span class="subtle">${escapeHtml(entry.team_pick || "-")} · score call</span>
+      <div class="prediction-row-side">
+        <div class="prediction-team-pill">
+          ${entry.team_pick ? renderTeamMark(entry.team_pick, "xs") : ""}
+          <div class="identity-copy">
+            <span class="subtle">Winner</span>
+            <strong>${escapeHtml(entry.team_pick || "-")}</strong>
+          </div>
+        </div>
+        <div class="entry-stats prediction-score-call">
+          <strong>${escapeHtml(entry.predicted_score ?? "-")}</strong>
+          <div class="entry-meta">
+            <span class="subtle">Score call</span>
+          </div>
         </div>
       </div>
     </div>
@@ -4101,6 +4279,134 @@ function getUserIdentityLabel() {
   return state.user?.phone || state.user?.email || "";
 }
 
+function getTeamBrand(teamName) {
+  const normalizedName = normalizeName(teamName || "");
+  const resolvedKey = TEAM_BRAND_ALIASES[normalizedName] || normalizedName;
+  return (
+    TEAM_BRANDS[resolvedKey] || {
+      short: getTeamShortCode(teamName),
+      logo: "",
+      primary: "#244eb1",
+      secondary: "#ff8f3d",
+      accent: "#9cdfff",
+    }
+  );
+}
+
+function getIdentityHue(seed) {
+  return Array.from(String(seed || "")).reduce((total, char) => total + char.charCodeAt(0), 0) % 360;
+}
+
+function buildIdentityStyle(seed, teamName = "") {
+  if (teamName) {
+    const brand = getTeamBrand(teamName);
+    return `--identity-primary:${brand.primary};--identity-secondary:${brand.secondary};--identity-accent:${brand.accent};`;
+  }
+
+  const hue = getIdentityHue(seed);
+  return `--identity-primary:hsl(${hue} 66% 46%);--identity-secondary:hsl(${(hue + 28) % 360} 84% 60%);--identity-accent:hsl(${(hue + 120) % 360} 72% 72%);`;
+}
+
+function getDisplayInitials(value, limit = 2) {
+  const parts = cleanText(value, 80)
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!parts.length) {
+    return "--";
+  }
+
+  return parts
+    .slice(0, limit)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function renderTeamMark(teamName, size = "md", className = "") {
+  const brand = getTeamBrand(teamName);
+  const classes = ["team-mark", `team-mark-${size}`, className].filter(Boolean).join(" ");
+  const fallback = getTeamShortCode(teamName) || "--";
+
+  return `
+    <span class="${classes}" style="${escapeAttribute(buildIdentityStyle(teamName, teamName))}">
+      ${
+        brand.logo
+          ? `<img src="${escapeAttribute(brand.logo)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
+          : ""
+      }
+      <span class="team-mark-fallback">${escapeHtml(fallback)}</span>
+    </span>
+  `;
+}
+
+function renderMemberAvatar(displayName, size = "sm", className = "") {
+  const classes = ["member-avatar", `member-avatar-${size}`, className].filter(Boolean).join(" ");
+
+  return `
+    <span class="${classes}" style="${escapeAttribute(buildIdentityStyle(displayName))}">
+      ${escapeHtml(getDisplayInitials(displayName))}
+    </span>
+  `;
+}
+
+function playerNamesMatch(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  const lookupLeft = normalizePlayerLookupKey(left);
+  const lookupRight = normalizePlayerLookupKey(right);
+  if (lookupLeft && lookupRight) {
+    return lookupLeft === lookupRight;
+  }
+
+  return normalizeName(left) === normalizeName(right);
+}
+
+function getPlayerMeta(match, playerName) {
+  if (!match || !playerName) {
+    return null;
+  }
+
+  for (const group of getPlayingXiGroups(match)) {
+    const player = group.players.find((entry) => playerNamesMatch(entry.name, playerName));
+    if (player) {
+      return {
+        ...player,
+        team: player.team || group.teamName,
+      };
+    }
+  }
+
+  return null;
+}
+
+function renderPlayerAvatar(match, playerName, { size = "sm", teamName = "", className = "" } = {}) {
+  const meta = getPlayerMeta(match, playerName);
+  const resolvedName = cleanMatchPlayerName(playerName || meta?.name || "Player");
+  const resolvedTeam = teamName || meta?.team || "";
+  const imageUrl =
+    meta?.image ||
+    meta?.imageUrl ||
+    meta?.photo ||
+    meta?.playerImage ||
+    "";
+  const classes = ["player-avatar", `player-avatar-${size}`, className].filter(Boolean).join(" ");
+  const fallback = getDisplayInitials(resolvedName);
+
+  return `
+    <span class="${classes}" style="${escapeAttribute(buildIdentityStyle(resolvedName, resolvedTeam))}">
+      ${
+        imageUrl
+          ? `<img src="${escapeAttribute(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
+          : ""
+      }
+      <span class="player-avatar-fallback">${escapeHtml(fallback)}</span>
+    </span>
+  `;
+}
+
 function getTeamShortCode(teamName) {
   const normalized = normalizeName(teamName || "");
   const preset = {
@@ -4494,23 +4800,35 @@ function getHeroStatusLabel(focusMatch) {
 
 function renderLeaderboardRow(entry, index) {
   const sameUser = entry.user_id === state.user?.id;
+  const displayName = entry.display_name || "Player";
 
   return `
     <div class="leaderboard-item ${sameUser ? "current-user" : ""} ${index < 3 ? `leaderboard-top leaderboard-top-${index + 1}` : ""}">
-      <div class="split-line">
-        <div class="leaderboard-rank">${index + 1}</div>
-        <div>
-          <strong>${escapeHtml(entry.display_name)}</strong>
-          <div class="leaderboard-meta">
-            <span class="subtle">${entry.matches_joined || 0} matches joined</span>
-            <span class="subtle">${entry.role}</span>
-            ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
+      <div class="leaderboard-main">
+        <div class="leaderboard-headline">
+          <div class="leaderboard-rank">${index + 1}</div>
+          ${renderMemberAvatar(displayName, "md")}
+          <div class="leaderboard-summary">
+            <div class="prediction-row-head">
+              <strong>${escapeHtml(displayName)}</strong>
+              ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
+            </div>
+            <div class="leaderboard-meta">
+              <span class="subtle">${entry.matches_joined || 0} matches joined</span>
+              <span class="subtle">${entry.role}</span>
+            </div>
+            <div class="leaderboard-breakdown">
+              <span class="chip"><strong>Bat</strong>${escapeHtml(entry.batsman_points ?? 0)}</span>
+              <span class="chip"><strong>Bowl</strong>${escapeHtml(entry.bowler_points ?? 0)}</span>
+              <span class="chip"><strong>Team</strong>${escapeHtml(entry.team_points ?? 0)}</span>
+              <span class="chip"><strong>Score</strong>${escapeHtml(entry.score_points ?? 0)}</span>
+            </div>
           </div>
         </div>
       </div>
       <div class="leaderboard-points">
         <strong>${escapeHtml(entry.total_points ?? 0)}</strong>
-        <span class="subtle">points</span>
+        <span class="subtle">total points</span>
       </div>
     </div>
   `;
@@ -6391,6 +6709,19 @@ function normalizePlayerEntry(entry, fallbackTeam) {
     role: cleanNullableText(
       entry?.role || entry?.playerRole || entry?.skill || entry?.PlayerSkill,
       40,
+    ),
+    image: cleanNullableText(
+      entry?.image ||
+        entry?.img ||
+        entry?.photo ||
+        entry?.playerImage ||
+        entry?.player_image ||
+        entry?.playerImageName ||
+        entry?.PlayerImage ||
+        entry?.PlayerImageName ||
+        entry?.profileImage ||
+        entry?.Image,
+      500,
     ),
   };
 }
