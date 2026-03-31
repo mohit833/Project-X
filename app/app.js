@@ -4,6 +4,13 @@ const root = document.getElementById("app");
 const THEME_STORAGE_KEY = "ipl-theme-mode-v2";
 const MATCH_ROUTE_SECTIONS = new Set(["fixtures", "centre", "picks", "admin"]);
 const PRIMARY_ROUTE_PAGES = new Set(["home", "matches", "standings", "league", "account"]);
+const MATCH_CENTRE_PANELS = [
+  { key: "prediction", label: "Predict", panelId: "prediction-panel" },
+  { key: "live", label: "Live", panelId: "live-status-panel" },
+  { key: "picks", label: "Picks", panelId: "picks-board-panel" },
+  { key: "squads", label: "Squads", panelId: "squad-panel" },
+  { key: "result", label: "Result", panelId: "result-panel", requiresResult: true },
+];
 const TEAM_BRANDS = {
   "chennai-super-kings": {
     short: "CSK",
@@ -122,6 +129,7 @@ const state = {
   route: readRouteState(),
   theme: readStoredTheme(),
   selectedMatchId: null,
+  activeMatchCentrePanel: "prediction",
   fixtureFilters: {
     team: "all",
     venue: "all",
@@ -991,9 +999,13 @@ function handleHashChange() {
 }
 
 function syncRouteSelection() {
+  const previousMatchId = state.selectedMatchId;
   const requestedMatchId = state.route?.matchId;
   if (requestedMatchId && state.matches.some((match) => match.id === requestedMatchId)) {
     state.selectedMatchId = requestedMatchId;
+    if (state.selectedMatchId !== previousMatchId) {
+      state.activeMatchCentrePanel = "prediction";
+    }
     return;
   }
 
@@ -1002,6 +1014,9 @@ function syncRouteSelection() {
   }
 
   state.selectedMatchId = chooseDefaultMatchId(state.matches);
+  if (state.selectedMatchId !== previousMatchId) {
+    state.activeMatchCentrePanel = "prediction";
+  }
 }
 
 function getCurrentRoute() {
@@ -2379,21 +2394,52 @@ function renderMatchSummaryStrip(match) {
   `;
 }
 
+function getActiveMatchCentrePanel(hasResult) {
+  const availablePanels = MATCH_CENTRE_PANELS.filter(
+    (panel) => !panel.requiresResult || hasResult,
+  );
+
+  return (
+    availablePanels.find((panel) => panel.key === state.activeMatchCentrePanel)?.key ||
+    availablePanels[0]?.key ||
+    "prediction"
+  );
+}
+
+function getMatchCentrePanelKeyFromId(panelId) {
+  return (
+    MATCH_CENTRE_PANELS.find((panel) => panel.panelId === panelId)?.key || "prediction"
+  );
+}
+
 function renderMatchCentreQuickNav(match, isAdmin, hasResult) {
+  const activePanel = getActiveMatchCentrePanel(hasResult);
+  const tabs = MATCH_CENTRE_PANELS.filter(
+    (panel) => !panel.requiresResult || hasResult,
+  );
+
   return `
-    <div class="match-centre-quick-nav">
-      <button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="prediction-panel">Your pick</button>
-      <button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="live-status-panel">Live</button>
-      <button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="picks-board-panel">Taken picks</button>
-      <button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="squad-panel">Squads</button>
-      ${
-        hasResult
-          ? `<button class="ghost-btn" type="button" data-action="jump-match-panel" data-panel-id="result-panel">Result</button>`
-          : ""
-      }
+    <div class="match-centre-quick-nav" role="tablist" aria-label="Match centre sections">
+      ${tabs
+        .map(
+          (panel) => `
+            <button
+              class="ghost-btn match-centre-tab ${activePanel === panel.key ? "active" : ""}"
+              type="button"
+              data-action="jump-match-panel"
+              data-panel-id="${panel.panelId}"
+              data-panel-key="${panel.key}"
+              role="tab"
+              aria-selected="${activePanel === panel.key ? "true" : "false"}"
+            >
+              ${escapeHtml(panel.label)}
+            </button>
+          `,
+        )
+        .join("")}
       ${
         isAdmin
-          ? `<a class="ghost-btn" href="${buildRouteHref({ page: "matches", section: "admin", matchId: match.id })}">Admin</a>`
+          ? `<a class="ghost-btn match-centre-tab match-centre-tab-link" href="${buildRouteHref({ page: "matches", section: "admin", matchId: match.id })}">Admin</a>`
           : ""
       }
     </div>
@@ -3245,6 +3291,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
     : liveWindow.scoreLocked
       ? "Score locked"
       : "Score opens after 3.1 overs";
+  const activePanel = getActiveMatchCentrePanel(Boolean(scoreResult));
   const actionLabel = prediction
     ? "Update your prediction"
     : editablePrediction
@@ -3340,8 +3387,8 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
       }
       ${renderMatchStateNotice(match, syncSummary, isAdmin)}
 
-      <section class="match-command-layout">
-        <aside class="panel entry-shell prediction-dock" id="prediction-panel">
+      <section class="match-command-layout" data-active-panel="${escapeAttribute(activePanel)}">
+        <aside class="panel entry-shell prediction-dock match-centre-panel panel-group-prediction" id="prediction-panel">
           <div class="section-head">
             <div>
               <span class="panel-kicker">Your entry</span>
@@ -3447,7 +3494,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
         </aside>
 
         <div class="match-content-stack">
-          <section class="panel live-pulse-panel" id="live-status-panel">
+          <section class="panel live-pulse-panel match-centre-panel panel-group-live" id="live-status-panel">
             <div class="section-head">
               <div>
                 <span class="panel-kicker">Live command</span>
@@ -3499,7 +3546,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
             </div>
           </section>
 
-          <section class="panel prediction-board" id="picks-board-panel">
+          <section class="panel prediction-board match-centre-panel panel-group-picks" id="picks-board-panel">
             <div class="section-head">
               <div>
                 <span class="panel-kicker">Locked by others</span>
@@ -3515,7 +3562,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           </section>
 
           <div class="grid-2 roster-engine-grid">
-            <section class="panel roster-panel" id="squad-panel">
+            <section class="panel roster-panel match-centre-panel panel-group-squads" id="squad-panel">
               <div class="section-head">
                 <div>
                   <span class="panel-kicker">Selection pool</span>
@@ -3553,7 +3600,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
               }
             </section>
 
-            <section class="panel engine-panel" id="engine-panel">
+            <section class="panel engine-panel match-centre-panel panel-group-live" id="engine-panel">
               <div class="section-head">
                 <div>
                   <span class="panel-kicker">Automation</span>
@@ -3576,7 +3623,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           ${
             scoreResult
               ? `
-                <section class="panel result-ribbon" id="result-panel">
+                <section class="panel result-ribbon match-centre-panel panel-group-result" id="result-panel">
                   <div class="section-head">
                     <div>
                       <span class="panel-kicker">Result archive</span>
@@ -4633,6 +4680,9 @@ async function handleClick(event) {
     if (action === "open-match-section") {
       const section = target.getAttribute("data-section") || state.route?.section || "centre";
       const matchId = target.getAttribute("data-match-id") || getSelectedMatch()?.id;
+      if (section === "centre") {
+        state.activeMatchCentrePanel = "prediction";
+      }
       navigateToRoute(
         {
           page: "matches",
@@ -4646,6 +4696,7 @@ async function handleClick(event) {
 
     if (action === "select-match") {
       state.selectedMatchId = target.getAttribute("data-match-id");
+      state.activeMatchCentrePanel = "prediction";
       if (state.route?.page === "matches") {
         navigateToRoute(
           {
@@ -4665,6 +4716,9 @@ async function handleClick(event) {
 
     if (action === "jump-match-panel") {
       const panelId = target.getAttribute("data-panel-id");
+      state.activeMatchCentrePanel =
+        target.getAttribute("data-panel-key") || getMatchCentrePanelKeyFromId(panelId);
+      render();
       scrollPanelIntoView(panelId);
       return;
     }

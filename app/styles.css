@@ -2747,14 +2747,22 @@ body[data-theme="light"] .match-rail-item.active {
   gap: 10px;
 }
 
-.match-centre-quick-nav .ghost-btn {
+.match-centre-quick-nav .ghost-btn,
+.match-centre-tab-link {
   color: #ffffff;
   border-color: rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.08);
 }
 
-.match-centre-quick-nav .ghost-btn:hover {
+.match-centre-quick-nav .ghost-btn:hover,
+.match-centre-tab-link:hover {
   background: rgba(255, 255, 255, 0.14);
+}
+
+.match-centre-tab.active {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
 }
 
 .match-command-status-card {
@@ -3042,6 +3050,58 @@ body[data-theme="light"] .match-rail-item.active {
     justify-self: start;
   }
 
+  .match-centre-quick-nav {
+    position: sticky;
+    top: 10px;
+    z-index: 15;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    margin: 4px -4px 0;
+    padding: 6px 4px 2px;
+    scrollbar-width: none;
+  }
+
+  .match-centre-quick-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .match-centre-quick-nav .ghost-btn,
+  .match-centre-tab-link {
+    flex: 0 0 auto;
+    min-width: 104px;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
+  .match-command-layout[data-active-panel="prediction"] .match-centre-panel,
+  .match-command-layout[data-active-panel="live"] .match-centre-panel,
+  .match-command-layout[data-active-panel="picks"] .match-centre-panel,
+  .match-command-layout[data-active-panel="squads"] .match-centre-panel,
+  .match-command-layout[data-active-panel="result"] .match-centre-panel {
+    display: none;
+  }
+
+  .match-command-layout[data-active-panel="prediction"] .panel-group-prediction {
+    display: grid;
+  }
+
+  .match-command-layout[data-active-panel="live"] .panel-group-live {
+    display: block;
+  }
+
+  .match-command-layout[data-active-panel="picks"] .panel-group-picks {
+    display: block;
+  }
+
+  .match-command-layout[data-active-panel="squads"] .panel-group-squads {
+    display: block;
+  }
+
+  .match-command-layout[data-active-panel="result"] .panel-group-result {
+    display: block;
+  }
+
   .match-switcher-deck {
     padding: 18px;
   }
@@ -3070,6 +3130,12 @@ body[data-theme="light"] .match-rail-item.active {
   body[data-theme="light"] .mobile-dock {
     background: rgba(255, 255, 255, 0.94);
     border-color: rgba(18, 46, 103, 0.08);
+  }
+
+  body[data-theme="light"] .match-centre-tab.active {
+    background: rgba(18, 46, 103, 0.12);
+    border-color: rgba(18, 46, 103, 0.18);
+    color: #0d265f;
   }
 
   .mobile-dock-link {
