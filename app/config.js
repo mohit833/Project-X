@@ -6,5 +6,5 @@ export const APP_CONFIG = {
   CRICKET_API_BASE_URL: "https://api.cricapi.com/v1",
   CRICKET_API_KEY: "8db084ef-3c67-48d0-b567-87665c0ba3b2",
   CRICKET_SERIES_HINTS: ["indian premier league", "ipl", "tata ipl"],
-  AUTO_SYNC_INTERVAL_MS: 10000,
+  AUTO_SYNC_INTERVAL_MS: 600000,
 };

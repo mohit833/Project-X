@@ -136,10 +136,10 @@ const DEMO_USER_ID = "demo-user";
 const DEMO_LEAGUE_ID = "demo-league";
 const MIN_OFFICIAL_TEAM_SQUAD_SIZE = 11;
 const TEAM_SQUAD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
-const LEAGUE_REFRESH_THROTTLE_MS = 10 * 1000;
-const AUTO_SYNC_RESUME_THROTTLE_MS = 15 * 1000;
-const MATCH_STATUS_PROBE_STALE_MS = 10 * 1000;
-const MATCH_STATUS_PROBE_THROTTLE_MS = 10 * 1000;
+const LEAGUE_REFRESH_THROTTLE_MS = 10 * 60 * 1000;
+const AUTO_SYNC_RESUME_THROTTLE_MS = 10 * 60 * 1000;
+const MATCH_STATUS_PROBE_STALE_MS = 10 * 60 * 1000;
+const MATCH_STATUS_PROBE_THROTTLE_MS = 10 * 60 * 1000;
 const DEMO_MATCHES = [
   {
     id: "match-1",
@@ -1142,7 +1142,7 @@ function canRefreshLeagueBundle() {
 }
 
 function getSyncPollingIntervalMs() {
-  return Math.max(Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 10000, 10000);
+  return Math.max(Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 10 * 60 * 1000, 10 * 60 * 1000);
 }
 
 function requestLeagueRefresh({ force = false } = {}) {
@@ -1199,13 +1199,13 @@ function handleAutoSyncVisibilityChange() {
     return;
   }
 
-  requestLeagueRefresh({ force: true });
-  requestAutoSync({ force: true });
+  requestLeagueRefresh();
+  requestAutoSync();
 }
 
 function handleAutoSyncResume() {
-  requestLeagueRefresh({ force: true });
-  requestAutoSync({ force: true });
+  requestLeagueRefresh();
+  requestAutoSync();
 }
 
 function shouldProbeVisibleMatch(match) {
@@ -3672,6 +3672,26 @@ function renderAdminTools(match) {
   const liveWindow = match ? getLiveWindowState(match, getCurrentUserPrediction(match.id)) : null;
   const matchResult = match ? getMatchResult(match) : null;
   const selectedMatchStatus = match ? computeMatchStatus(match) : null;
+  const recoveryEntries = match ? getAdminRecoveryEntries(match.id) : [];
+  const recoveryMissingCount = recoveryEntries.filter((entry) => !entry.hasCore).length;
+  const recoveryScoreOnlyCount = recoveryEntries.filter(
+    (entry) => !entry.hasCore && entry.hasScore,
+  ).length;
+  const defaultRecoveryEntry =
+    recoveryEntries.find((entry) => !entry.hasCore) || recoveryEntries[0] || null;
+  const recoveryBatsmanOptions = match
+    ? getSelectablePlayers(match, "batsman", defaultRecoveryEntry?.prediction || null)
+    : [];
+  const recoveryBowlerOptions = match
+    ? getSelectablePlayers(match, "bowler", defaultRecoveryEntry?.prediction || null)
+    : [];
+  const recoveryBatsmanListId = match ? `admin-recovery-batsmen-${match.id}` : "";
+  const recoveryBowlerListId = match ? `admin-recovery-bowlers-${match.id}` : "";
+  const pollingIntervalMs = Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 90 * 1000;
+  const pollingLabel =
+    pollingIntervalMs >= 60 * 1000
+      ? `${Math.round(pollingIntervalMs / 60000)} min`
+      : `${Math.round(pollingIntervalMs / 1000)} sec`;
 
   return `
     <section class="panel">
@@ -3696,9 +3716,7 @@ function renderAdminTools(match) {
             <span class="chip"><strong>League</strong>IPL</span>
             <span class="chip"><strong>Season</strong>${escapeHtml(scheduleYear)}</span>
             <span class="chip"><strong>Matches in league</strong>${state.matches.length}</span>
-            <span class="chip"><strong>Polling</strong>${escapeHtml(
-              `${Math.round((APP_CONFIG.AUTO_SYNC_INTERVAL_MS || 90000) / 1000)} sec`,
-            )}</span>
+            <span class="chip"><strong>Polling</strong>${escapeHtml(pollingLabel)}</span>
           </div>
           <div class="split-line" style="margin-top: 1rem;">
             <button class="btn" type="button" data-action="load-provider-fixtures" ${state.loadingProviderFixtures ? "disabled" : ""}>
@@ -3758,6 +3776,93 @@ function renderAdminTools(match) {
                     `
                     : `<div class="empty-state">No provider link yet. Sync the league schedule first, then this match will gain live data automatically.</div>`
                 }
+              </div>
+              <div class="admin-card">
+                <div class="section-head">
+                  <div>
+                    <h4>Prediction recovery</h4>
+                    <p>Use this when the platform bug wiped unsaved core picks before 3.1 overs. It restores batsman, bowler, and winner for a member without touching their score call.</p>
+                  </div>
+                </div>
+                <div class="chip-list">
+                  <span class="chip"><strong>Members</strong>${recoveryEntries.length}</span>
+                  <span class="chip"><strong>Core missing</strong>${recoveryMissingCount}</span>
+                  <span class="chip"><strong>Score only</strong>${recoveryScoreOnlyCount}</span>
+                  <span class="chip"><strong>Window</strong>Admin recovery</span>
+                </div>
+                <form class="form-grid" id="admin-recovery-form">
+                  <input type="hidden" name="match_id" value="${match.id}" />
+                  <div class="field span-2">
+                    <label for="admin-recovery-member">Member</label>
+                    <select
+                      id="admin-recovery-member"
+                      name="target_user_id"
+                      ${!recoveryEntries.length ? "disabled" : ""}
+                    >
+                      <option value="">Choose member</option>
+                      ${renderAdminRecoveryMemberOptions(
+                        match.id,
+                        defaultRecoveryEntry?.member?.user_id || "",
+                      )}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="admin-recovery-batsman">Batsman</label>
+                    <input
+                      id="admin-recovery-batsman"
+                      type="text"
+                      name="batsman_name"
+                      list="${escapeAttribute(recoveryBatsmanListId)}"
+                      value="${escapeAttribute(defaultRecoveryEntry?.prediction?.batsman_name || "")}"
+                      placeholder="Type batsman name"
+                      ${!recoveryEntries.length ? "disabled" : ""}
+                    />
+                    <datalist id="${escapeAttribute(recoveryBatsmanListId)}">
+                      ${renderPlayerDatalistOptions(recoveryBatsmanOptions)}
+                    </datalist>
+                  </div>
+                  <div class="field">
+                    <label for="admin-recovery-bowler">Bowler</label>
+                    <input
+                      id="admin-recovery-bowler"
+                      type="text"
+                      name="bowler_name"
+                      list="${escapeAttribute(recoveryBowlerListId)}"
+                      value="${escapeAttribute(defaultRecoveryEntry?.prediction?.bowler_name || "")}"
+                      placeholder="Type bowler name"
+                      ${!recoveryEntries.length ? "disabled" : ""}
+                    />
+                    <datalist id="${escapeAttribute(recoveryBowlerListId)}">
+                      ${renderPlayerDatalistOptions(recoveryBowlerOptions)}
+                    </datalist>
+                  </div>
+                  <div class="field span-2">
+                    <label for="admin-recovery-team">Winning team</label>
+                    <select
+                      id="admin-recovery-team"
+                      name="team_pick"
+                      ${!recoveryEntries.length ? "disabled" : ""}
+                    >
+                      <option value="">Choose winner</option>
+                      <option value="${escapeAttribute(match.team_a)}" ${
+                        defaultRecoveryEntry?.prediction?.team_pick === match.team_a ? "selected" : ""
+                      }>${escapeHtml(match.team_a)}</option>
+                      <option value="${escapeAttribute(match.team_b)}" ${
+                        defaultRecoveryEntry?.prediction?.team_pick === match.team_b ? "selected" : ""
+                      }>${escapeHtml(match.team_b)}</option>
+                    </select>
+                  </div>
+                  <div class="field span-2">
+                    <small>
+                      Recovery bypasses the 3.1 core-pick lock for admins only. If the squad suggestions are incomplete, you can type the official player names manually or use the SQL helper from the editor.
+                    </small>
+                  </div>
+                  <div class="field span-2">
+                    <button class="btn" type="submit" ${!recoveryEntries.length ? "disabled" : ""}>
+                      Recover core picks
+                    </button>
+                  </div>
+                </form>
               </div>
               <div class="admin-card">
                 <div class="section-head">
@@ -3938,6 +4043,11 @@ async function handleSubmit(event) {
 
     if (form.id === "result-form") {
       await saveResult(form);
+      return;
+    }
+
+    if (form.id === "admin-recovery-form") {
+      await saveAdminRecovery(form);
       return;
     }
 
@@ -4162,6 +4272,50 @@ async function savePrediction(form) {
   state.lastPredictionConflictKey = null;
   render();
   flash("Prediction saved.", "success");
+}
+
+async function saveAdminRecovery(form) {
+  const formData = new FormData(form);
+  const matchId = String(formData.get("match_id") || "");
+  const targetUserId = String(formData.get("target_user_id") || "").trim();
+  const batsmanName = cleanNullableText(formData.get("batsman_name"), 80);
+  const bowlerName = cleanNullableText(formData.get("bowler_name"), 80);
+  const teamPick = cleanNullableText(formData.get("team_pick"), 80);
+  const member = state.members.find((entry) => entry.user_id === targetUserId) || null;
+
+  if (!matchId) {
+    throw new Error("Match id is missing.");
+  }
+
+  if (!targetUserId) {
+    throw new Error("Choose the member you want to recover.");
+  }
+
+  if (!batsmanName || !bowlerName || !teamPick) {
+    throw new Error("Recovery needs batsman, bowler, and winning team.");
+  }
+
+  await withPendingForm(form, "Recovering picks...", async () => {
+    const { error } = await state.client.rpc("admin_recover_prediction", {
+      p_match_id: matchId,
+      p_target_user_id: targetUserId,
+      p_batsman_name: batsmanName,
+      p_bowler_name: bowlerName,
+      p_team_pick: teamPick,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    await loadLeagueBundle();
+  });
+
+  render();
+  flash(
+    `Core picks recovered for ${member?.display_name || "that member"}.`,
+    "success",
+  );
 }
 
 async function saveAdminOverride(form) {
@@ -4945,6 +5099,86 @@ function chooseDefaultMatchId(matches = state.matches) {
 
 function getPredictionsForMatch(matchId) {
   return state.predictions.filter((entry) => entry.match_id === matchId);
+}
+
+function getMemberPrediction(matchId, userId) {
+  if (!matchId || !userId) {
+    return null;
+  }
+
+  return (
+    state.predictions.find(
+      (entry) => entry.match_id === matchId && entry.user_id === userId,
+    ) || null
+  );
+}
+
+function hasCorePrediction(prediction) {
+  return Boolean(
+    prediction?.batsman_name && prediction?.bowler_name && prediction?.team_pick,
+  );
+}
+
+function getAdminRecoveryEntries(matchId) {
+  return state.members
+    .map((member) => {
+      const prediction = getMemberPrediction(matchId, member.user_id);
+      return {
+        member,
+        prediction,
+        hasCore: hasCorePrediction(prediction),
+        hasScore:
+          prediction?.predicted_score !== null &&
+          prediction?.predicted_score !== undefined,
+      };
+    })
+    .sort((left, right) => {
+      const leftRank = left.hasCore ? 1 : 0;
+      const rightRank = right.hasCore ? 1 : 0;
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+
+      return String(left.member.display_name || "").localeCompare(
+        String(right.member.display_name || ""),
+      );
+    });
+}
+
+function renderAdminRecoveryMemberOptions(matchId, selectedUserId = "") {
+  return getAdminRecoveryEntries(matchId)
+    .map(({ member, hasCore, hasScore }) => {
+      const label = hasCore ? "core saved" : hasScore ? "score only" : "core missing";
+      return `
+        <option value="${escapeAttribute(member.user_id)}" ${
+          String(member.user_id || "") === String(selectedUserId || "") ? "selected" : ""
+        }>
+          ${escapeHtml(member.display_name || "Player")} · ${escapeHtml(label)}
+        </option>
+      `;
+    })
+    .join("");
+}
+
+function renderPlayerDatalistOptions(groups) {
+  const seen = new Set();
+
+  return groups
+    .flatMap((group) => group.players.map((player) => player.name))
+    .filter((name) => {
+      const key = normalizeName(name);
+      if (!key || seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => left.localeCompare(right))
+    .map(
+      (name) => `<option value="${escapeAttribute(name)}">${escapeHtml(name)}</option>`,
+    )
+    .join("");
 }
 
 function getCurrentUserPrediction(matchId) {
