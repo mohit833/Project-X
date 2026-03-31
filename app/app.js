@@ -113,6 +113,7 @@ const state = {
   syncingMatchIds: new Set(),
   settlingMatchIds: new Set(),
   lastPredictionConflictKey: null,
+  predictionDrafts: {},
   teamSquads: {},
   teamSquadRetryAfter: {},
   loadingTeamSquads: new Set(),
@@ -827,6 +828,11 @@ async function loadLeagueBundle() {
       delete state.matchStatusProbeTimes[matchId];
     }
   }
+  for (const matchId of Object.keys(state.predictionDrafts)) {
+    if (!validMatchIds.has(matchId)) {
+      delete state.predictionDrafts[matchId];
+    }
+  }
   for (const matchId of Array.from(state.probingMatchIds)) {
     if (!validMatchIds.has(matchId)) {
       state.probingMatchIds.delete(matchId);
@@ -1144,6 +1150,10 @@ function requestLeagueRefresh({ force = false } = {}) {
     return;
   }
 
+  if (isPredictionFormActive()) {
+    return;
+  }
+
   const now = Date.now();
   if (!force && now - state.lastLeagueRefreshKickAt < LEAGUE_REFRESH_THROTTLE_MS) {
     return;
@@ -1166,6 +1176,10 @@ function requestLeagueRefresh({ force = false } = {}) {
 
 function requestAutoSync({ force = false } = {}) {
   if (!canAutoSyncMatches() || state.autoSyncBusy) {
+    return;
+  }
+
+  if (isPredictionFormActive()) {
     return;
   }
 
@@ -3194,13 +3208,14 @@ function renderMatchCard(match) {
 function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
   const status = computeMatchStatus(match);
   const entries = getPredictionsForMatch(match.id);
+  const editablePrediction = getEditablePrediction(match.id, prediction);
   const liveWindow = getLiveWindowState(match, prediction);
   const scoreResult = getMatchResult(match);
   const squadGroups = getPlayingXiGroups(match);
   const hasSquad = squadGroups.some((group) => group.players.length);
   const squadsLoading = isOfficialTeamSquadLoading(match);
-  const batsmanOptions = getSelectablePlayers(match, "batsman", prediction);
-  const bowlerOptions = getSelectablePlayers(match, "bowler", prediction);
+  const batsmanOptions = getSelectablePlayers(match, "batsman", editablePrediction);
+  const bowlerOptions = getSelectablePlayers(match, "bowler", editablePrediction);
   const syncSummary = getMatchSyncSummary(match);
   const canEditCore = !leagueEnded && liveWindow.coreWindowOpen;
   const canEditScore = !leagueEnded && liveWindow.scoreWindowOpen;
@@ -3230,7 +3245,11 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
     : liveWindow.scoreLocked
       ? "Score locked"
       : "Score opens after 3.1 overs";
-  const actionLabel = prediction ? "Update your prediction" : "Make your prediction";
+  const actionLabel = prediction
+    ? "Update your prediction"
+    : editablePrediction
+      ? "Continue your prediction"
+      : "Make your prediction";
   const userStateLabel = prediction
     ? prediction.score_submitted_at
       ? "Prediction complete"
@@ -3349,13 +3368,13 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                       <div class="field">
                         <label for="batsman-name">Batsman</label>
                         <select id="batsman-name" name="batsman_name" ${!canEditCore || !hasSquad ? "disabled" : ""}>
-                          ${renderPlayerSelectOptions("Choose batsman", batsmanOptions, prediction?.batsman_name)}
+                          ${renderPlayerSelectOptions("Choose batsman", batsmanOptions, editablePrediction?.batsman_name)}
                         </select>
                       </div>
                       <div class="field">
                         <label for="bowler-name">Bowler</label>
                         <select id="bowler-name" name="bowler_name" ${!canEditCore || !hasSquad ? "disabled" : ""}>
-                          ${renderPlayerSelectOptions("Choose bowler", bowlerOptions, prediction?.bowler_name)}
+                          ${renderPlayerSelectOptions("Choose bowler", bowlerOptions, editablePrediction?.bowler_name)}
                         </select>
                       </div>
                       <div class="field span-2">
@@ -3363,10 +3382,10 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                         <select id="team-pick" name="team_pick" ${!canEditCore ? "disabled" : ""}>
                           <option value="">Choose a winner</option>
                           <option value="${escapeAttribute(match.team_a)}" ${
-                            prediction?.team_pick === match.team_a ? "selected" : ""
+                            editablePrediction?.team_pick === match.team_a ? "selected" : ""
                           }>${escapeHtml(match.team_a)}</option>
                           <option value="${escapeAttribute(match.team_b)}" ${
-                            prediction?.team_pick === match.team_b ? "selected" : ""
+                            editablePrediction?.team_pick === match.team_b ? "selected" : ""
                           }>${escapeHtml(match.team_b)}</option>
                         </select>
                       </div>
@@ -3408,7 +3427,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                           pattern="[0-9]*"
                           maxlength="3"
                           placeholder="182"
-                          value="${escapeAttribute(prediction?.predicted_score ?? "")}"
+                          value="${escapeAttribute(editablePrediction?.predicted_score ?? "")}"
                           ${!canEditScore ? "disabled" : ""}
                         />
                       </div>
@@ -3424,7 +3443,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                   </div>
                 `
           }
-          ${renderPredictionSnapshot(match, prediction)}
+          ${renderPredictionSnapshot(match, editablePrediction)}
         </aside>
 
         <div class="match-content-stack">
@@ -4139,6 +4158,7 @@ async function savePrediction(form) {
       await loadLeagueBundle();
     },
   );
+  clearPredictionDraft(matchId);
   state.lastPredictionConflictKey = null;
   render();
   flash("Prediction saved.", "success");
@@ -4500,6 +4520,7 @@ function handleChange(event) {
     document.getElementById("create-picks-at").value = target.value;
   }
 
+  syncPredictionDraftFromForm(target.form);
   maybeWarnPredictionConflict(target.form);
 }
 
@@ -4517,6 +4538,7 @@ function handleInput(event) {
     target.value = target.value.replace(/\D+/g, "");
   }
 
+  syncPredictionDraftFromForm(target.form);
   maybeWarnPredictionConflict(target.form);
 }
 
@@ -4934,6 +4956,94 @@ function getCurrentUserPrediction(matchId) {
     state.predictions.find(
       (entry) => entry.match_id === matchId && entry.user_id === state.user.id,
     ) || null
+  );
+}
+
+function isPredictionForm(form) {
+  return (
+    form instanceof HTMLFormElement &&
+    (form.id === "core-prediction-form" || form.id === "score-prediction-form")
+  );
+}
+
+function hasPredictionDraftValues(prediction) {
+  if (!prediction) {
+    return false;
+  }
+
+  return Boolean(
+    prediction.batsman_name ||
+      prediction.bowler_name ||
+      prediction.team_pick ||
+      prediction.core_submitted_at ||
+      prediction.score_submitted_at ||
+      prediction.predicted_score !== null && prediction.predicted_score !== undefined,
+  );
+}
+
+function getPredictionDraft(matchId) {
+  if (!matchId) {
+    return null;
+  }
+
+  return state.predictionDrafts[matchId] || null;
+}
+
+function getEditablePrediction(matchId, prediction = getCurrentUserPrediction(matchId)) {
+  const draft = getPredictionDraft(matchId);
+  if (!draft) {
+    return prediction;
+  }
+
+  const mergedPrediction = {
+    ...(prediction || {}),
+    ...draft,
+    match_id: matchId,
+    user_id: prediction?.user_id || state.user?.id || null,
+    id: prediction?.id || null,
+    core_submitted_at: prediction?.core_submitted_at || null,
+    score_submitted_at: prediction?.score_submitted_at || null,
+    core_locked_due_to_pre_xi: prediction?.core_locked_due_to_pre_xi || false,
+  };
+
+  return hasPredictionDraftValues(mergedPrediction) ? mergedPrediction : null;
+}
+
+function syncPredictionDraftFromForm(form) {
+  if (!isPredictionForm(form)) {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const matchId = String(formData.get("match_id") || "");
+  if (!matchId) {
+    return;
+  }
+
+  const predictedScoreRaw = String(formData.get("predicted_score") || "").trim();
+  state.predictionDrafts[matchId] = {
+    batsman_name: cleanNullableText(formData.get("batsman_name"), 80),
+    bowler_name: cleanNullableText(formData.get("bowler_name"), 80),
+    team_pick: cleanNullableText(formData.get("team_pick"), 80),
+    predicted_score: /^\d+$/.test(predictedScoreRaw)
+      ? Number.parseInt(predictedScoreRaw, 10)
+      : null,
+  };
+}
+
+function clearPredictionDraft(matchId) {
+  if (!matchId) {
+    return;
+  }
+
+  delete state.predictionDrafts[matchId];
+}
+
+function isPredictionFormActive() {
+  const activeElement = document.activeElement;
+  return Boolean(
+    activeElement instanceof HTMLElement &&
+      activeElement.closest("#core-prediction-form, #score-prediction-form"),
   );
 }
 
