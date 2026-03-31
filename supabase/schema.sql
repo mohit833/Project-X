@@ -644,6 +644,10 @@ begin
     raise exception 'Only admins can edit match windows.';
   end if;
 
+  if v_match.status = 'cancelled' then
+    raise exception 'Cancelled matches are frozen.';
+  end if;
+
   update public.matches
   set status = coalesce(nullif(trim(coalesce(p_status, '')), ''), status),
       starts_at = coalesce(p_starts_at, starts_at),
@@ -651,6 +655,63 @@ begin
       playing_xi_announced_at = p_playing_xi_announced_at,
       picks_deadline_at = coalesce(p_picks_deadline_at, picks_deadline_at),
       score_deadline_at = coalesce(p_score_deadline_at, score_deadline_at)
+  where id = p_match_id;
+end;
+$$;
+
+create or replace function public.cancel_match(
+  p_match_id uuid,
+  p_notes text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_match public.matches%rowtype;
+  v_note text;
+begin
+  if v_uid is null then
+    raise exception 'You must be signed in.';
+  end if;
+
+  select *
+  into v_match
+  from public.matches
+  where id = p_match_id;
+
+  if v_match.id is null then
+    raise exception 'Match not found.';
+  end if;
+
+  if not public.is_league_admin(v_match.league_id) then
+    raise exception 'Only admins can cancel matches.';
+  end if;
+
+  v_note := nullif(trim(coalesce(p_notes, '')), '');
+
+  if v_note is null then
+    v_note := nullif(trim(coalesce(v_match.notes, '')), '');
+  end if;
+
+  if v_note is null then
+    v_note := 'Cancelled by admin. This fixture does not count toward scoring.';
+  elsif position('cancelled by admin' in lower(v_note)) = 0 then
+    v_note := v_note || E'\n\nCancelled by admin. This fixture does not count toward scoring.';
+  end if;
+
+  delete from public.match_results
+  where match_id = p_match_id;
+
+  update public.matches
+  set status = 'cancelled',
+      auto_sync_enabled = false,
+      current_innings_ball = null,
+      current_over_display = null,
+      sync_error = null,
+      notes = v_note
   where id = p_match_id;
 end;
 $$;
@@ -694,6 +755,10 @@ begin
 
   if v_match.id is null then
     raise exception 'Match not found.';
+  end if;
+
+  if v_match.status = 'cancelled' then
+    raise exception 'This match has been cancelled.';
   end if;
 
   select *
@@ -896,6 +961,10 @@ begin
     raise exception 'Only admins can recover member picks.';
   end if;
 
+  if v_match.status = 'cancelled' then
+    raise exception 'Cancelled matches cannot accept recovered picks.';
+  end if;
+
   if p_target_user_id is null then
     raise exception 'Target member is required.';
   end if;
@@ -1054,6 +1123,10 @@ begin
     raise exception 'Only admins can save match results.';
   end if;
 
+  if v_match.status = 'cancelled' then
+    raise exception 'Cancelled matches cannot be settled.';
+  end if;
+
   if lower(v_winner) = lower(v_match.team_a) then
     v_winner := v_match.team_a;
   elsif lower(v_winner) = lower(v_match.team_b) then
@@ -1208,6 +1281,7 @@ grant execute on function public.join_league(text) to authenticated;
 grant execute on function public.end_league(uuid) to authenticated;
 grant execute on function public.create_match(uuid, text, text, text, timestamptz, timestamptz, timestamptz, timestamptz, text, text) to authenticated;
 grant execute on function public.save_match_timeline(uuid, text, timestamptz, timestamptz, timestamptz, timestamptz, timestamptz) to authenticated;
+grant execute on function public.cancel_match(uuid, text) to authenticated;
 grant execute on function public.submit_prediction(uuid, text, text, text, integer) to authenticated;
 grant execute on function public.admin_recover_prediction(uuid, uuid, text, text, text, integer) to authenticated;
 grant execute on function public.save_match_result(uuid, text, integer, jsonb, jsonb, text) to authenticated;

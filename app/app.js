@@ -119,6 +119,7 @@ const state = {
   loadingProviderFixtures: false,
   syncingMatchIds: new Set(),
   settlingMatchIds: new Set(),
+  cancellingMatchIds: new Set(),
   lastPredictionConflictKey: null,
   predictionDrafts: {},
   teamSquads: {},
@@ -3043,7 +3044,7 @@ function doesMatchNeedUserAction(match, prediction = getCurrentUserPrediction(ma
   }
 
   const status = computeMatchStatus(match);
-  if (isFinishedMatchStatus(status)) {
+  if (status === "cancelled" || isFinishedMatchStatus(status)) {
     return false;
   }
 
@@ -3065,7 +3066,7 @@ function isCurrentMatchCandidate(match, prediction = getCurrentUserPrediction(ma
   }
 
   const status = computeMatchStatus(match);
-  if (status === "completed" || status === "finalizing") {
+  if (status === "completed" || status === "finalizing" || status === "cancelled") {
     return false;
   }
 
@@ -3096,12 +3097,13 @@ function sortMatchesChronologically(matches = state.matches) {
 
 function getCurrentActionMatch(matches = state.matches) {
   const sortedMatches = sortMatchesChronologically(matches);
+  const eligibleMatches = sortedMatches.filter((match) => computeMatchStatus(match) !== "cancelled");
   if (!sortedMatches.length) {
     return null;
   }
 
   const now = Date.now();
-  const todayMatches = sortedMatches.filter((match) => isTodayMatch(match, now));
+  const todayMatches = eligibleMatches.filter((match) => isTodayMatch(match, now));
 
   if (todayMatches.length) {
     const todayNeedsAction = todayMatches.find((match) =>
@@ -3121,14 +3123,15 @@ function getCurrentActionMatch(matches = state.matches) {
 
     const nextTodayUpcoming = todayMatches.find((match) => {
       const startsAt = getMatchStartTimestamp(match);
-      return startsAt !== null && startsAt >= now && !isFinishedMatchStatus(computeMatchStatus(match));
+      const status = computeMatchStatus(match);
+      return startsAt !== null && startsAt >= now && status !== "cancelled" && !isFinishedMatchStatus(status);
     });
     if (nextTodayUpcoming) {
       return nextTodayUpcoming;
     }
   }
 
-  const nextNeedsAction = sortedMatches.find((match) => {
+  const nextNeedsAction = eligibleMatches.find((match) => {
     const startsAt = getMatchStartTimestamp(match);
     return startsAt !== null && startsAt >= now && doesMatchNeedUserAction(match, getCurrentUserPrediction(match.id));
   });
@@ -3136,16 +3139,18 @@ function getCurrentActionMatch(matches = state.matches) {
     return nextNeedsAction;
   }
 
-  const nextUpcoming = sortedMatches.find((match) => {
+  const nextUpcoming = eligibleMatches.find((match) => {
     const startsAt = getMatchStartTimestamp(match);
-    return startsAt !== null && startsAt >= now && !isFinishedMatchStatus(computeMatchStatus(match));
+    const status = computeMatchStatus(match);
+    return startsAt !== null && startsAt >= now && status !== "cancelled" && !isFinishedMatchStatus(status);
   });
   if (nextUpcoming) {
     return nextUpcoming;
   }
 
   return (
-    sortedMatches.find((match) => ["live", "locked", "finalizing"].includes(computeMatchStatus(match)))
+    eligibleMatches.find((match) => ["live", "locked", "finalizing"].includes(computeMatchStatus(match)))
+    || eligibleMatches[0]
     || sortedMatches[0]
     || null
   );
@@ -3223,13 +3228,17 @@ function getCurrentMatchQueue(currentMatch = getCurrentActionMatch(), limit = 5)
   pushMatch(currentMatch);
 
   sortedMatches
-    .filter((match) => isTodayMatch(match, now) && !isFinishedMatchStatus(computeMatchStatus(match)))
+    .filter((match) => {
+      const status = computeMatchStatus(match);
+      return isTodayMatch(match, now) && status !== "cancelled" && !isFinishedMatchStatus(status);
+    })
     .forEach(pushMatch);
 
   sortedMatches
     .filter((match) => {
       const startsAt = getMatchStartTimestamp(match);
-      return startsAt !== null && startsAt >= now && !isFinishedMatchStatus(computeMatchStatus(match));
+      const status = computeMatchStatus(match);
+      return startsAt !== null && startsAt >= now && status !== "cancelled" && !isFinishedMatchStatus(status);
     })
     .forEach(pushMatch);
 
@@ -4243,13 +4252,15 @@ function renderAdminTools(match) {
                       </div>
                       <div class="split-line" style="margin-top: 1rem;">
                         <button class="btn" type="button" data-action="sync-selected-match" data-match-id="${match.id}" ${
-                          state.syncingMatchIds.has(match.id) ? "disabled" : ""
+                          state.syncingMatchIds.has(match.id) || selectedMatchStatus === "cancelled" ? "disabled" : ""
                         }>${state.syncingMatchIds.has(match.id) ? "Syncing..." : "Sync now"}</button>
-                        <button class="ghost-btn" type="button" data-action="toggle-auto-sync" data-match-id="${match.id}">
+                        <button class="ghost-btn" type="button" data-action="toggle-auto-sync" data-match-id="${match.id}" ${
+                          selectedMatchStatus === "cancelled" ? "disabled" : ""
+                        }>
                           ${match.auto_sync_enabled ? "Pause auto sync" : "Resume auto sync"}
                         </button>
                         <button class="ghost-btn" type="button" data-action="calculate-match-points" data-match-id="${match.id}" ${
-                          state.settlingMatchIds.has(match.id) || !isFinishedMatchStatus(selectedMatchStatus)
+                          state.settlingMatchIds.has(match.id) || !isFinishedMatchStatus(selectedMatchStatus) || selectedMatchStatus === "cancelled"
                             ? "disabled"
                             : ""
                         }>${
@@ -4260,6 +4271,11 @@ function renderAdminTools(match) {
                               : "Calculate points now"
                         }</button>
                       </div>
+                      ${
+                        selectedMatchStatus === "cancelled"
+                          ? `<span class="subtle">This fixture is cancelled. Sync and settlement are disabled, and the leaderboard ignores it entirely.</span>`
+                          : ""
+                      }
                       ${
                         isFinishedMatchStatus(selectedMatchStatus)
                           ? `<span class="subtle">Use this if the match has finished but the leaderboard has not updated yet. It re-runs point allocation from the official IPL scorecard.</span>`
@@ -4287,93 +4303,99 @@ function renderAdminTools(match) {
                   <span class="chip"><strong>Score only</strong>${recoveryScoreOnlyCount}</span>
                   <span class="chip"><strong>Window</strong>Admin recovery</span>
                 </div>
-                <form class="form-grid" id="admin-recovery-form">
-                  <input type="hidden" name="match_id" value="${match.id}" />
-                  <div class="field span-2">
-                    <label for="admin-recovery-member">Member</label>
-                    <select
-                      id="admin-recovery-member"
-                      name="target_user_id"
-                      ${!recoveryEntries.length ? "disabled" : ""}
-                    >
-                      <option value="">Choose member</option>
-                      ${renderAdminRecoveryMemberOptions(
-                        match.id,
-                        defaultRecoveryEntry?.member?.user_id || "",
-                      )}
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="admin-recovery-batsman">Batsman</label>
-                    <input
-                      id="admin-recovery-batsman"
-                      type="text"
-                      name="batsman_name"
-                      list="${escapeAttribute(recoveryBatsmanListId)}"
-                      value="${escapeAttribute(defaultRecoveryEntry?.prediction?.batsman_name || "")}"
-                      placeholder="Type batsman name"
-                      ${!recoveryEntries.length ? "disabled" : ""}
-                    />
-                    <datalist id="${escapeAttribute(recoveryBatsmanListId)}">
-                      ${renderPlayerDatalistOptions(recoveryBatsmanOptions)}
-                    </datalist>
-                  </div>
-                  <div class="field">
-                    <label for="admin-recovery-bowler">Bowler</label>
-                    <input
-                      id="admin-recovery-bowler"
-                      type="text"
-                      name="bowler_name"
-                      list="${escapeAttribute(recoveryBowlerListId)}"
-                      value="${escapeAttribute(defaultRecoveryEntry?.prediction?.bowler_name || "")}"
-                      placeholder="Type bowler name"
-                      ${!recoveryEntries.length ? "disabled" : ""}
-                    />
-                    <datalist id="${escapeAttribute(recoveryBowlerListId)}">
-                      ${renderPlayerDatalistOptions(recoveryBowlerOptions)}
-                    </datalist>
-                  </div>
-                  <div class="field span-2">
-                    <label for="admin-recovery-team">Winning team</label>
-                    <select
-                      id="admin-recovery-team"
-                      name="team_pick"
-                      ${!recoveryEntries.length ? "disabled" : ""}
-                    >
-                      <option value="">Choose winner</option>
-                      <option value="${escapeAttribute(match.team_a)}" ${
-                        defaultRecoveryEntry?.prediction?.team_pick === match.team_a ? "selected" : ""
-                      }>${escapeHtml(match.team_a)}</option>
-                      <option value="${escapeAttribute(match.team_b)}" ${
-                        defaultRecoveryEntry?.prediction?.team_pick === match.team_b ? "selected" : ""
-                      }>${escapeHtml(match.team_b)}</option>
-                    </select>
-                  </div>
-                  <div class="field span-2">
-                    <label for="admin-recovery-score">1st innings total</label>
-                    <input
-                      id="admin-recovery-score"
-                      type="text"
-                      name="predicted_score"
-                      inputmode="numeric"
-                      pattern="[0-9]*"
-                      maxlength="3"
-                      value="${escapeAttribute(defaultRecoveryEntry?.prediction?.predicted_score ?? "")}"
-                      placeholder="Leave blank to keep current score"
-                      ${!recoveryEntries.length ? "disabled" : ""}
-                    />
-                  </div>
-                  <div class="field span-2">
-                    <small>
-                      Recovery bypasses the normal 3.1 and 7.1 user locks for admins only. Leave score blank if you only want to repair batsman, bowler, and winner.
-                    </small>
-                  </div>
-                  <div class="field span-2">
-                    <button class="btn" type="submit" ${!recoveryEntries.length ? "disabled" : ""}>
-                      Recover member prediction
-                    </button>
-                  </div>
-                </form>
+                ${
+                  selectedMatchStatus === "cancelled"
+                    ? `<div class="empty-state">This fixture is cancelled, so prediction recovery is frozen and no user picks from this match will contribute to scoring.</div>`
+                    : `
+                      <form class="form-grid" id="admin-recovery-form">
+                        <input type="hidden" name="match_id" value="${match.id}" />
+                        <div class="field span-2">
+                          <label for="admin-recovery-member">Member</label>
+                          <select
+                            id="admin-recovery-member"
+                            name="target_user_id"
+                            ${!recoveryEntries.length ? "disabled" : ""}
+                          >
+                            <option value="">Choose member</option>
+                            ${renderAdminRecoveryMemberOptions(
+                              match.id,
+                              defaultRecoveryEntry?.member?.user_id || "",
+                            )}
+                          </select>
+                        </div>
+                        <div class="field">
+                          <label for="admin-recovery-batsman">Batsman</label>
+                          <input
+                            id="admin-recovery-batsman"
+                            type="text"
+                            name="batsman_name"
+                            list="${escapeAttribute(recoveryBatsmanListId)}"
+                            value="${escapeAttribute(defaultRecoveryEntry?.prediction?.batsman_name || "")}"
+                            placeholder="Type batsman name"
+                            ${!recoveryEntries.length ? "disabled" : ""}
+                          />
+                          <datalist id="${escapeAttribute(recoveryBatsmanListId)}">
+                            ${renderPlayerDatalistOptions(recoveryBatsmanOptions)}
+                          </datalist>
+                        </div>
+                        <div class="field">
+                          <label for="admin-recovery-bowler">Bowler</label>
+                          <input
+                            id="admin-recovery-bowler"
+                            type="text"
+                            name="bowler_name"
+                            list="${escapeAttribute(recoveryBowlerListId)}"
+                            value="${escapeAttribute(defaultRecoveryEntry?.prediction?.bowler_name || "")}"
+                            placeholder="Type bowler name"
+                            ${!recoveryEntries.length ? "disabled" : ""}
+                          />
+                          <datalist id="${escapeAttribute(recoveryBowlerListId)}">
+                            ${renderPlayerDatalistOptions(recoveryBowlerOptions)}
+                          </datalist>
+                        </div>
+                        <div class="field span-2">
+                          <label for="admin-recovery-team">Winning team</label>
+                          <select
+                            id="admin-recovery-team"
+                            name="team_pick"
+                            ${!recoveryEntries.length ? "disabled" : ""}
+                          >
+                            <option value="">Choose winner</option>
+                            <option value="${escapeAttribute(match.team_a)}" ${
+                              defaultRecoveryEntry?.prediction?.team_pick === match.team_a ? "selected" : ""
+                            }>${escapeHtml(match.team_a)}</option>
+                            <option value="${escapeAttribute(match.team_b)}" ${
+                              defaultRecoveryEntry?.prediction?.team_pick === match.team_b ? "selected" : ""
+                            }>${escapeHtml(match.team_b)}</option>
+                          </select>
+                        </div>
+                        <div class="field span-2">
+                          <label for="admin-recovery-score">1st innings total</label>
+                          <input
+                            id="admin-recovery-score"
+                            type="text"
+                            name="predicted_score"
+                            inputmode="numeric"
+                            pattern="[0-9]*"
+                            maxlength="3"
+                            value="${escapeAttribute(defaultRecoveryEntry?.prediction?.predicted_score ?? "")}"
+                            placeholder="Leave blank to keep current score"
+                            ${!recoveryEntries.length ? "disabled" : ""}
+                          />
+                        </div>
+                        <div class="field span-2">
+                          <small>
+                            Recovery bypasses the normal 3.1 and 7.1 user locks for admins only. Leave score blank if you only want to repair batsman, bowler, and winner.
+                          </small>
+                        </div>
+                        <div class="field span-2">
+                          <button class="btn" type="submit" ${!recoveryEntries.length ? "disabled" : ""}>
+                            Recover member prediction
+                          </button>
+                        </div>
+                      </form>
+                    `
+                }
               </div>
               <div class="admin-card">
                 <div class="section-head">
@@ -4382,73 +4404,103 @@ function renderAdminTools(match) {
                     <p>Creator can override match timing and current ball if the live feed lags or needs correction.</p>
                   </div>
                 </div>
-                <form class="form-grid" id="admin-override-form">
-                  <input type="hidden" name="match_id" value="${match.id}" />
-                  <div class="field">
-                    <label for="override-status">Status</label>
-                    <select id="override-status" name="status">
-                      ${["scheduled", "live", "locked", "completed", "cancelled"]
-                        .map(
-                          (status) => `
-                            <option value="${status}" ${
-                              computeMatchStatus(match) === status ? "selected" : ""
-                            }>${labelizeStatus(status)}</option>
-                          `,
-                        )
-                        .join("")}
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="override-starts-at">Starts at</label>
-                    <input id="override-starts-at" type="datetime-local" name="starts_at" value="${escapeAttribute(
-                      toDateTimeInput(match.starts_at),
-                    )}" />
-                  </div>
-                  <div class="field">
-                    <label for="override-innings-at">Innings started at</label>
-                    <input id="override-innings-at" type="datetime-local" name="innings_started_at" value="${escapeAttribute(
-                      toDateTimeInput(match.innings_started_at),
-                    )}" />
-                  </div>
-                  <div class="field">
-                    <label for="override-xi-at">Official XI announced at</label>
-                    <input id="override-xi-at" type="datetime-local" name="playing_xi_announced_at" value="${escapeAttribute(
-                      toDateTimeInput(match.playing_xi_announced_at),
-                    )}" />
-                  </div>
-                  <div class="field">
-                    <label for="override-picks-at">Core picks fallback lock</label>
-                    <input id="override-picks-at" type="datetime-local" name="picks_deadline_at" value="${escapeAttribute(
-                      toDateTimeInput(match.picks_deadline_at),
-                    )}" />
-                  </div>
-                  <div class="field">
-                    <label for="override-score-at">Score fallback lock</label>
-                    <input id="override-score-at" type="datetime-local" name="score_deadline_at" value="${escapeAttribute(
-                      toDateTimeInput(match.score_deadline_at),
-                    )}" />
-                  </div>
-                  <div class="field">
-                    <label for="override-current-ball">Current 1st innings ball</label>
-                    <input id="override-current-ball" type="text" inputmode="numeric" name="current_innings_ball" value="${escapeAttribute(
-                      liveWindow?.currentBall ?? "",
-                    )}" placeholder="19" />
-                  </div>
-                  <div class="field span-2">
-                    <label for="override-notes">Notes</label>
-                    <textarea id="override-notes" name="notes" placeholder="Optional admin note or exception rule.">${escapeHtml(
-                      match.notes || "",
-                    )}</textarea>
-                  </div>
-                  <div class="field span-2">
-                    <small>
-                      Setting current ball lets you manually force the 3.1 and 7.1 over locks. Leave it blank to rely on provider sync and fallback deadlines.
-                    </small>
-                  </div>
-                  <div class="field span-2">
-                    <button class="btn" type="submit">Save admin override</button>
-                  </div>
-                </form>
+                ${
+                  selectedMatchStatus === "cancelled"
+                    ? `
+                      <div class="empty-state">
+                        This fixture is cancelled and frozen. Its result row is removed, it no longer affects leaderboard totals, and live override controls stay disabled.
+                      </div>
+                    `
+                    : `
+                      <form class="form-grid" id="admin-override-form">
+                        <input type="hidden" name="match_id" value="${match.id}" />
+                        <div class="field">
+                          <label for="override-status">Status</label>
+                          <select id="override-status" name="status">
+                            ${["scheduled", "live", "locked", "completed"]
+                              .map(
+                                (status) => `
+                                  <option value="${status}" ${
+                                    computeMatchStatus(match) === status ? "selected" : ""
+                                  }>${labelizeStatus(status)}</option>
+                                `,
+                              )
+                              .join("")}
+                          </select>
+                        </div>
+                        <div class="field">
+                          <label for="override-starts-at">Starts at</label>
+                          <input id="override-starts-at" type="datetime-local" name="starts_at" value="${escapeAttribute(
+                            toDateTimeInput(match.starts_at),
+                          )}" />
+                        </div>
+                        <div class="field">
+                          <label for="override-innings-at">Innings started at</label>
+                          <input id="override-innings-at" type="datetime-local" name="innings_started_at" value="${escapeAttribute(
+                            toDateTimeInput(match.innings_started_at),
+                          )}" />
+                        </div>
+                        <div class="field">
+                          <label for="override-xi-at">Official XI announced at</label>
+                          <input id="override-xi-at" type="datetime-local" name="playing_xi_announced_at" value="${escapeAttribute(
+                            toDateTimeInput(match.playing_xi_announced_at),
+                          )}" />
+                        </div>
+                        <div class="field">
+                          <label for="override-picks-at">Core picks fallback lock</label>
+                          <input id="override-picks-at" type="datetime-local" name="picks_deadline_at" value="${escapeAttribute(
+                            toDateTimeInput(match.picks_deadline_at),
+                          )}" />
+                        </div>
+                        <div class="field">
+                          <label for="override-score-at">Score fallback lock</label>
+                          <input id="override-score-at" type="datetime-local" name="score_deadline_at" value="${escapeAttribute(
+                            toDateTimeInput(match.score_deadline_at),
+                          )}" />
+                        </div>
+                        <div class="field">
+                          <label for="override-current-ball">Current 1st innings ball</label>
+                          <input id="override-current-ball" type="text" inputmode="numeric" name="current_innings_ball" value="${escapeAttribute(
+                            liveWindow?.currentBall ?? "",
+                          )}" placeholder="19" />
+                        </div>
+                        <div class="field span-2">
+                          <label for="override-notes">Notes</label>
+                          <textarea id="override-notes" name="notes" placeholder="Optional admin note or exception rule.">${escapeHtml(
+                            match.notes || "",
+                          )}</textarea>
+                        </div>
+                        <div class="field span-2">
+                          <small>
+                            Setting current ball lets you manually force the 3.1 and 7.1 over locks. Leave it blank to rely on provider sync and fallback deadlines.
+                          </small>
+                        </div>
+                        <div class="field span-2 admin-danger-zone">
+                          <small>
+                            Use cancellation only when the fixture is abandoned or officially called off. Cancelled matches never allocate points, and any existing points from that fixture are removed.
+                          </small>
+                          <button
+                            class="ghost-btn danger-btn"
+                            type="button"
+                            data-action="cancel-match"
+                            data-match-id="${match.id}"
+                            ${state.cancellingMatchIds.has(match.id) || selectedMatchStatus === "cancelled" ? "disabled" : ""}
+                          >
+                            ${
+                              selectedMatchStatus === "cancelled"
+                                ? "Match cancelled"
+                                : state.cancellingMatchIds.has(match.id)
+                                  ? "Cancelling..."
+                                  : "Cancel match"
+                            }
+                          </button>
+                        </div>
+                        <div class="field span-2">
+                          <button class="btn" type="submit">Save admin override</button>
+                        </div>
+                      </form>
+                    `
+                }
               </div>
               <div class="admin-card">
                 <div class="section-head">
@@ -4457,48 +4509,54 @@ function renderAdminTools(match) {
                     <p>Use this only if the provider result or scorecard is missing and you need to settle points manually.</p>
                   </div>
                 </div>
-                <form class="form-grid" id="result-form">
-                  <input type="hidden" name="match_id" value="${match.id}" />
-                  <div class="field">
-                    <label for="result-winner">Winner</label>
-                    <select id="result-winner" name="winner_team">
-                      <option value="">Choose winner</option>
-                      <option value="${escapeAttribute(match.team_a)}" ${
-                        matchResult?.winner_team === match.team_a ? "selected" : ""
-                      }>${escapeHtml(match.team_a)}</option>
-                      <option value="${escapeAttribute(match.team_b)}" ${
-                        matchResult?.winner_team === match.team_b ? "selected" : ""
-                      }>${escapeHtml(match.team_b)}</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="result-total">1st innings total</label>
-                    <input id="result-total" type="text" inputmode="numeric" name="first_innings_total" value="${escapeAttribute(
-                      matchResult?.first_innings_total ?? "",
-                    )}" placeholder="182" />
-                  </div>
-                  <div class="field span-2">
-                    <label for="result-batsmen">Batsman runs</label>
-                    <textarea id="result-batsmen" name="batsman_runs" placeholder="Virat Kohli: 72">${escapeHtml(
-                      mapToLines(matchResult?.batsman_runs || {}),
-                    )}</textarea>
-                  </div>
-                  <div class="field span-2">
-                    <label for="result-bowlers">Bowler wickets</label>
-                    <textarea id="result-bowlers" name="bowler_wickets" placeholder="Jasprit Bumrah: 2">${escapeHtml(
-                      mapToLines(matchResult?.bowler_wickets || {}),
-                    )}</textarea>
-                  </div>
-                  <div class="field span-2">
-                    <label for="result-notes">Result notes</label>
-                    <textarea id="result-notes" name="notes" placeholder="Optional settlement note.">${escapeHtml(
-                      matchResult?.notes || "",
-                    )}</textarea>
-                  </div>
-                  <div class="field span-2">
-                    <button class="ghost-btn" type="submit">Save manual result</button>
-                  </div>
-                </form>
+                ${
+                  selectedMatchStatus === "cancelled"
+                    ? `<div class="empty-state">This fixture is cancelled, so manual settlement stays disabled and no points will be applied.</div>`
+                    : `
+                      <form class="form-grid" id="result-form">
+                        <input type="hidden" name="match_id" value="${match.id}" />
+                        <div class="field">
+                          <label for="result-winner">Winner</label>
+                          <select id="result-winner" name="winner_team">
+                            <option value="">Choose winner</option>
+                            <option value="${escapeAttribute(match.team_a)}" ${
+                              matchResult?.winner_team === match.team_a ? "selected" : ""
+                            }>${escapeHtml(match.team_a)}</option>
+                            <option value="${escapeAttribute(match.team_b)}" ${
+                              matchResult?.winner_team === match.team_b ? "selected" : ""
+                            }>${escapeHtml(match.team_b)}</option>
+                          </select>
+                        </div>
+                        <div class="field">
+                          <label for="result-total">1st innings total</label>
+                          <input id="result-total" type="text" inputmode="numeric" name="first_innings_total" value="${escapeAttribute(
+                            matchResult?.first_innings_total ?? "",
+                          )}" placeholder="182" />
+                        </div>
+                        <div class="field span-2">
+                          <label for="result-batsmen">Batsman runs</label>
+                          <textarea id="result-batsmen" name="batsman_runs" placeholder="Virat Kohli: 72">${escapeHtml(
+                            mapToLines(matchResult?.batsman_runs || {}),
+                          )}</textarea>
+                        </div>
+                        <div class="field span-2">
+                          <label for="result-bowlers">Bowler wickets</label>
+                          <textarea id="result-bowlers" name="bowler_wickets" placeholder="Jasprit Bumrah: 2">${escapeHtml(
+                            mapToLines(matchResult?.bowler_wickets || {}),
+                          )}</textarea>
+                        </div>
+                        <div class="field span-2">
+                          <label for="result-notes">Result notes</label>
+                          <textarea id="result-notes" name="notes" placeholder="Optional settlement note.">${escapeHtml(
+                            matchResult?.notes || "",
+                          )}</textarea>
+                        </div>
+                        <div class="field span-2">
+                          <button class="ghost-btn" type="submit">Save manual result</button>
+                        </div>
+                      </form>
+                    `
+                }
               </div>
             `
             : ""
@@ -4977,6 +5035,10 @@ async function saveResult(form) {
     throw new Error("Winner and first innings total are required.");
   }
 
+  if (match?.status === "cancelled") {
+    throw new Error("Cancelled matches cannot be settled.");
+  }
+
   await withPendingForm(form, "Saving result...", async () => {
     const { error } = await state.client.rpc("save_match_result", {
       p_match_id: matchId,
@@ -5084,6 +5146,16 @@ async function handleClick(event) {
         state.endingLeagueId = null;
         render();
       }
+      return;
+    }
+
+    if (action === "cancel-match") {
+      const matchId = target.getAttribute("data-match-id") || getSelectedMatch()?.id;
+      if (!matchId) {
+        throw new Error("Match not found.");
+      }
+
+      await cancelMatch(matchId);
       return;
     }
 
@@ -5521,6 +5593,10 @@ function normalizeMatchRecord(match) {
 }
 
 function getMatchResult(match) {
+  if (match?.status === "cancelled") {
+    return null;
+  }
+
   return normalizeMatchResultRelation(match?.match_results, match);
 }
 
@@ -5818,12 +5894,12 @@ function isFinishedMatchStatus(status) {
 }
 
 function computeMatchStatus(match) {
-  if (isMatchSettled(match)) {
-    return "completed";
+  if (match?.status === "cancelled") {
+    return "cancelled";
   }
 
-  if (match.status === "cancelled") {
-    return "cancelled";
+  if (isMatchSettled(match)) {
+    return "completed";
   }
 
   if (isMatchFinalizing(match)) {
@@ -5990,7 +6066,7 @@ function buildLeaderboardFromMatches(members, predictions, matches) {
 
     row.matches_joined += 1;
 
-    if (!result) {
+    if (!result || match?.status === "cancelled") {
       continue;
     }
 
@@ -6701,6 +6777,46 @@ async function toggleAutoSync(matchId) {
   flash(match.auto_sync_enabled ? "Auto sync paused." : "Auto sync resumed.", "success");
 }
 
+async function cancelMatch(matchId) {
+  const match = state.matches.find((entry) => entry.id === matchId) || null;
+  if (!match) {
+    throw new Error("Match not found.");
+  }
+
+  if (match.status === "cancelled") {
+    flash("This match is already cancelled.", "info");
+    return;
+  }
+
+  if (
+    !window.confirm(
+      "Are you sure you want to cancel this match? Any points already allocated from this fixture will be removed from the leaderboard.",
+    )
+  ) {
+    return;
+  }
+
+  state.cancellingMatchIds.add(matchId);
+  render();
+
+  try {
+    const { error } = await state.client.rpc("cancel_match", {
+      p_match_id: matchId,
+      p_notes: cleanNullableText(match.notes, 600),
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    await loadLeagueBundle();
+    flash("Match cancelled. This fixture no longer contributes any points.", "success");
+  } finally {
+    state.cancellingMatchIds.delete(matchId);
+    render();
+  }
+}
+
 async function syncTrackedMatches({ quiet = true } = {}) {
   if (state.autoSyncBusy) {
     return;
@@ -6734,6 +6850,10 @@ async function syncMatchFromProvider(
 ) {
   if (!match?.external_match_id) {
     throw new Error("This match is not linked to a live provider yet.");
+  }
+
+  if (match.status === "cancelled") {
+    throw new Error("Cancelled matches cannot be synced into scoring.");
   }
 
   if (state.demoMode) {
@@ -6953,6 +7073,14 @@ function shouldAttemptPlayingXiSync(fixture) {
 }
 
 async function settleSyncedMatchIfReady(match, snapshot, { throwWhenUnavailable = false } = {}) {
+  if (match?.status === "cancelled") {
+    if (throwWhenUnavailable) {
+      throw new Error("Cancelled matches cannot be settled.");
+    }
+
+    return false;
+  }
+
   const scorecard =
     snapshot?.official_scorecard_bundle || (await fetchMatchScorecard(snapshot.external_match_id));
   const settlement = extractSettlementPayload(scorecard, match, snapshot);
@@ -6992,6 +7120,10 @@ async function settleSyncedMatchIfReady(match, snapshot, { throwWhenUnavailable 
 async function calculateMatchPointsFromProvider(match) {
   if (!match?.external_match_id) {
     throw new Error("This match is not linked to an official feed yet.");
+  }
+
+  if (match.status === "cancelled") {
+    throw new Error("Cancelled matches cannot be settled.");
   }
 
   markMatchSettling(match.id, true);
@@ -7694,6 +7826,10 @@ function computeProviderMatchStatus(snapshot) {
 }
 
 function computePersistedProviderStatus(snapshot, existingMatch, settlementReady = false) {
+  if (existingMatch?.status === "cancelled") {
+    return "cancelled";
+  }
+
   const nextStatus =
     cleanNullableText(snapshot?.status, 20) || existingMatch?.status || "scheduled";
 

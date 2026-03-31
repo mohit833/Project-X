@@ -569,6 +569,20 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.danger-btn {
+  background: rgba(255, 97, 97, 0.12);
+  color: #ffb9b9;
+  border-color: rgba(255, 97, 97, 0.24);
+}
+
+.danger-btn:hover {
+  background: rgba(255, 97, 97, 0.18);
+}
+
+.admin-danger-zone {
+  gap: 14px;
+}
+
 .tiny-btn {
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.08);
@@ -608,6 +622,11 @@ button {
 .tag-finalizing {
   background: rgba(255, 184, 77, 0.16);
   color: #ffd79b;
+}
+
+.tag-cancelled {
+  background: rgba(255, 97, 97, 0.12);
+  color: #ffb9b9;
 }
 
 .tag-admin {
@@ -1787,6 +1806,12 @@ body[data-theme="light"] .notice-warning {
 body[data-theme="light"] .notice-error {
   background: rgba(211, 77, 79, 0.12);
   border-color: rgba(211, 77, 79, 0.18);
+}
+
+body[data-theme="light"] .danger-btn {
+  background: rgba(211, 77, 79, 0.1);
+  border-color: rgba(211, 77, 79, 0.18);
+  color: #9b1f28;
 }
 
 body[data-theme="light"] .chip.is-fresh,
