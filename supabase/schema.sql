@@ -860,7 +860,8 @@ create or replace function public.admin_recover_prediction(
   p_target_user_id uuid,
   p_batsman_name text,
   p_bowler_name text,
-  p_team_pick text
+  p_team_pick text,
+  p_predicted_score integer default null
 )
 returns uuid
 language plpgsql
@@ -937,6 +938,22 @@ begin
     raise exception 'That batsman-bowler combination has already been taken.';
   end if;
 
+  if p_predicted_score is not null then
+    if p_predicted_score < 0 then
+      raise exception 'Predicted score must be zero or higher.';
+    end if;
+
+    if exists (
+      select 1
+      from public.predictions
+      where match_id = p_match_id
+        and user_id <> p_target_user_id
+        and predicted_score = p_predicted_score
+    ) then
+      raise exception 'That score prediction has already been taken.';
+    end if;
+  end if;
+
   select *
   into v_prediction
   from public.predictions
@@ -966,9 +983,9 @@ begin
       v_batsman,
       v_bowler,
       v_team_pick,
-      null,
+      p_predicted_score,
       v_now,
-      null,
+      case when p_predicted_score is not null then v_now else null end,
       false
     )
     returning id into v_prediction_id;
@@ -978,7 +995,15 @@ begin
         batsman_name = v_batsman,
         bowler_name = v_bowler,
         team_pick = v_team_pick,
+        predicted_score = case
+          when p_predicted_score is not null then p_predicted_score
+          else predicted_score
+        end,
         core_submitted_at = coalesce(v_prediction.core_submitted_at, v_now),
+        score_submitted_at = case
+          when p_predicted_score is not null then coalesce(v_prediction.score_submitted_at, v_now)
+          else v_prediction.score_submitted_at
+        end,
         core_locked_due_to_pre_xi = case
           when v_prediction.core_submitted_at is null then false
           else v_prediction.core_locked_due_to_pre_xi
@@ -990,7 +1015,7 @@ begin
   return v_prediction_id;
 exception
   when unique_violation then
-    raise exception 'That batsman-bowler combination was just taken by someone else. Refresh and choose a different option.';
+    raise exception 'That score or batsman-bowler combination was just taken by someone else. Refresh and choose a different option.';
 end;
 $$;
 
@@ -1184,5 +1209,5 @@ grant execute on function public.end_league(uuid) to authenticated;
 grant execute on function public.create_match(uuid, text, text, text, timestamptz, timestamptz, timestamptz, timestamptz, text, text) to authenticated;
 grant execute on function public.save_match_timeline(uuid, text, timestamptz, timestamptz, timestamptz, timestamptz, timestamptz) to authenticated;
 grant execute on function public.submit_prediction(uuid, text, text, text, integer) to authenticated;
-grant execute on function public.admin_recover_prediction(uuid, uuid, text, text, text) to authenticated;
+grant execute on function public.admin_recover_prediction(uuid, uuid, text, text, text, integer) to authenticated;
 grant execute on function public.save_match_result(uuid, text, integer, jsonb, jsonb, text) to authenticated;

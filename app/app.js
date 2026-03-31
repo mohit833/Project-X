@@ -3781,7 +3781,7 @@ function renderAdminTools(match) {
                 <div class="section-head">
                   <div>
                     <h4>Prediction recovery</h4>
-                    <p>Use this when the platform bug wiped unsaved core picks before 3.1 overs. It restores batsman, bowler, and winner for a member without touching their score call.</p>
+                    <p>Use this when the platform bug wiped unsaved picks. It restores core picks for a member and can also repair their score call if needed.</p>
                   </div>
                 </div>
                 <div class="chip-list">
@@ -3853,13 +3853,27 @@ function renderAdminTools(match) {
                     </select>
                   </div>
                   <div class="field span-2">
+                    <label for="admin-recovery-score">1st innings total</label>
+                    <input
+                      id="admin-recovery-score"
+                      type="text"
+                      name="predicted_score"
+                      inputmode="numeric"
+                      pattern="[0-9]*"
+                      maxlength="3"
+                      value="${escapeAttribute(defaultRecoveryEntry?.prediction?.predicted_score ?? "")}"
+                      placeholder="Leave blank to keep current score"
+                      ${!recoveryEntries.length ? "disabled" : ""}
+                    />
+                  </div>
+                  <div class="field span-2">
                     <small>
-                      Recovery bypasses the 3.1 core-pick lock for admins only. If the squad suggestions are incomplete, you can type the official player names manually or use the SQL helper from the editor.
+                      Recovery bypasses the normal 3.1 and 7.1 user locks for admins only. Leave score blank if you only want to repair batsman, bowler, and winner.
                     </small>
                   </div>
                   <div class="field span-2">
                     <button class="btn" type="submit" ${!recoveryEntries.length ? "disabled" : ""}>
-                      Recover core picks
+                      Recover member prediction
                     </button>
                   </div>
                 </form>
@@ -4281,6 +4295,9 @@ async function saveAdminRecovery(form) {
   const batsmanName = cleanNullableText(formData.get("batsman_name"), 80);
   const bowlerName = cleanNullableText(formData.get("bowler_name"), 80);
   const teamPick = cleanNullableText(formData.get("team_pick"), 80);
+  const predictedScoreRaw = String(formData.get("predicted_score") || "").trim();
+  const predictedScore =
+    predictedScoreRaw === "" ? null : Number.parseInt(predictedScoreRaw, 10);
   const member = state.members.find((entry) => entry.user_id === targetUserId) || null;
 
   if (!matchId) {
@@ -4295,6 +4312,10 @@ async function saveAdminRecovery(form) {
     throw new Error("Recovery needs batsman, bowler, and winning team.");
   }
 
+  if (predictedScoreRaw !== "" && !/^\d+$/.test(predictedScoreRaw)) {
+    throw new Error("Recovered score must contain numbers only.");
+  }
+
   await withPendingForm(form, "Recovering picks...", async () => {
     const { error } = await state.client.rpc("admin_recover_prediction", {
       p_match_id: matchId,
@@ -4302,6 +4323,7 @@ async function saveAdminRecovery(form) {
       p_batsman_name: batsmanName,
       p_bowler_name: bowlerName,
       p_team_pick: teamPick,
+      p_predicted_score: predictedScore,
     });
 
     if (error) {
@@ -4313,7 +4335,7 @@ async function saveAdminRecovery(form) {
 
   render();
   flash(
-    `Core picks recovered for ${member?.display_name || "that member"}.`,
+    `Recovered prediction for ${member?.display_name || "that member"}.`,
     "success",
   );
 }
