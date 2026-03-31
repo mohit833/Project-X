@@ -4364,16 +4364,28 @@ async function saveAdminRecovery(form) {
   }
 
   await withPendingForm(form, "Recovering picks...", async () => {
-    const { error } = await state.client.rpc("admin_recover_prediction", {
+    const payload = {
       p_match_id: matchId,
       p_target_user_id: targetUserId,
       p_batsman_name: batsmanName,
       p_bowler_name: bowlerName,
       p_team_pick: teamPick,
-      p_predicted_score: predictedScore,
-    });
+    };
+
+    if (predictedScore !== null) {
+      payload.p_predicted_score = predictedScore;
+    }
+
+    const { error } = await state.client.rpc("admin_recover_prediction", payload);
 
     if (error) {
+      if (error.code === "PGRST202") {
+        throw new Error(
+          predictedScore !== null
+            ? "Supabase is still on the older admin recovery function. Run the admin recovery migration in SQL editor, then retry score recovery."
+            : "Supabase is missing the admin recovery function. Run the admin recovery migration in SQL editor, then retry.",
+        );
+      }
       throw error;
     }
 
