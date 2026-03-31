@@ -143,6 +143,7 @@ const state = {
 const DEMO_USER_ID = "demo-user";
 const DEMO_LEAGUE_ID = "demo-league";
 const MIN_OFFICIAL_TEAM_SQUAD_SIZE = 11;
+const LEAGUE_MATCH_TIME_ZONE = "Asia/Kolkata";
 const TEAM_SQUAD_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
 const LEAGUE_REFRESH_THROTTLE_MS = 10 * 60 * 1000;
 const AUTO_SYNC_RESUME_THROTTLE_MS = 10 * 60 * 1000;
@@ -3000,13 +3001,32 @@ function getMatchStartTimestamp(match) {
   return Number.isNaN(startsAt) ? null : startsAt;
 }
 
+function getDayKey(value, timeZone = LEAGUE_MATCH_TIME_ZONE) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === "year")?.value || "";
+  const month = parts.find((part) => part.type === "month")?.value || "";
+  const day = parts.find((part) => part.type === "day")?.value || "";
+  return `${year}-${month}-${day}`;
+}
+
 function isTodayMatch(match, referenceTime = Date.now()) {
   const startsAt = getMatchStartTimestamp(match);
   if (startsAt === null) {
     return false;
   }
 
-  return new Date(startsAt).toDateString() === new Date(referenceTime).toDateString();
+  return getDayKey(startsAt) === getDayKey(referenceTime);
 }
 
 function hasScorePrediction(prediction) {
@@ -3083,18 +3103,29 @@ function getCurrentActionMatch(matches = state.matches) {
   const now = Date.now();
   const todayMatches = sortedMatches.filter((match) => isTodayMatch(match, now));
 
-  const todayNeedsAction = todayMatches.find((match) =>
-    doesMatchNeedUserAction(match, getCurrentUserPrediction(match.id)),
-  );
-  if (todayNeedsAction) {
-    return todayNeedsAction;
-  }
+  if (todayMatches.length) {
+    const todayNeedsAction = todayMatches.find((match) =>
+      doesMatchNeedUserAction(match, getCurrentUserPrediction(match.id)),
+    );
+    if (todayNeedsAction) {
+      return todayNeedsAction;
+    }
 
-  const todayCandidate = todayMatches.find((match) =>
-    isCurrentMatchCandidate(match, getCurrentUserPrediction(match.id)),
-  );
-  if (todayCandidate) {
-    return todayCandidate;
+    const todayInMotion = todayMatches.find((match) => {
+      const status = computeMatchStatus(match);
+      return status === "live" || status === "locked" || status === "finalizing";
+    });
+    if (todayInMotion) {
+      return todayInMotion;
+    }
+
+    const nextTodayUpcoming = todayMatches.find((match) => {
+      const startsAt = getMatchStartTimestamp(match);
+      return startsAt !== null && startsAt >= now && !isFinishedMatchStatus(computeMatchStatus(match));
+    });
+    if (nextTodayUpcoming) {
+      return nextTodayUpcoming;
+    }
   }
 
   const nextNeedsAction = sortedMatches.find((match) => {
