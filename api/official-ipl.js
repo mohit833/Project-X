@@ -217,17 +217,21 @@ function parseOfficialTeamSquadHtml(source) {
 
 function extractOfficialPlayerImageFromHtml(block) {
   const source = String(block || "");
-  const fromSourceSet = decodeHtmlEntities(
-    source.match(/\bsrcset\s*=\s*"([^"]+)"/i)?.[1]?.split(",")?.[0]?.trim()?.split(/\s+/)?.[0] || "",
-  );
-  const raw =
-    decodeHtmlEntities(
-      source.match(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*"([^"]+)"/i)?.[1] ||
-        source.match(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*'([^']+)'/i)?.[1] ||
-        "",
-    ) || fromSourceSet;
+  const playerImageBlock =
+    source.match(/<div class="ih-p-img">([\s\S]*?)<\/div>/i)?.[1] || source;
 
-  return resolveOfficialPlayerImageUrl(raw);
+  const quotedCandidates = Array.from(
+    playerImageBlock.matchAll(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*"([^"]+)"/gi),
+  ).map((match) => decodeHtmlEntities(match[1]));
+  const singleQuotedCandidates = Array.from(
+    playerImageBlock.matchAll(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*'([^']+)'/gi),
+  ).map((match) => decodeHtmlEntities(match[1]));
+  const srcSetCandidate = decodeHtmlEntities(
+    playerImageBlock.match(/\bsrcset\s*=\s*"([^"]+)"/i)?.[1]?.split(",")?.[0]?.trim()?.split(/\s+/)?.[0] || "",
+  );
+
+  const candidates = [...quotedCandidates, ...singleQuotedCandidates, srcSetCandidate].filter(Boolean);
+  return resolveOfficialPlayerImageUrl(candidates[candidates.length - 1] || "");
 }
 
 function resolveOfficialPlayerImageUrl(value) {

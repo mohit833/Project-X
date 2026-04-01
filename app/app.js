@@ -6,7 +6,6 @@ const MATCH_ROUTE_SECTIONS = new Set(["fixtures", "centre", "picks", "admin"]);
 const PRIMARY_ROUTE_PAGES = new Set(["home", "current", "matches", "standings", "league", "account"]);
 const MATCH_CENTRE_PANELS = [
   { key: "prediction", label: "Predict", panelId: "prediction-panel" },
-  { key: "live", label: "Live", panelId: "live-status-panel" },
   { key: "picks", label: "Picks", panelId: "picks-board-panel" },
   { key: "squads", label: "Squads", panelId: "squad-panel" },
   { key: "result", label: "Result", panelId: "result-panel", requiresResult: true },
@@ -1928,7 +1927,6 @@ function renderCurrentMatchPage() {
   const isAdmin = currentMembership()?.role === "admin";
   const leagueEnded = getActiveLeague()?.status === "archived";
   const prediction = getCurrentUserPrediction(match?.id);
-  const queueMatches = getCurrentMatchQueue(match);
   const headline = match
     ? `${match.team_a} vs ${match.team_b}`
     : "No current fixture yet";
@@ -1953,12 +1951,12 @@ function renderCurrentMatchPage() {
               <strong>${escapeHtml(match ? getCurrentMatchWindowLabel(match, prediction) : "Waiting")}</strong>
             </div>
             <div class="broadcast-stat">
-              <span>Queue</span>
-              <strong>${escapeHtml(queueMatches.length)}</strong>
-            </div>
-            <div class="broadcast-stat">
               <span>Your points</span>
               <strong>${escapeHtml(getCurrentUserPoints())}</strong>
+            </div>
+            <div class="broadcast-stat">
+              <span>Role</span>
+              <strong>${escapeHtml(isAdmin ? "Admin" : "Member")}</strong>
             </div>
           </div>
         </div>
@@ -1976,41 +1974,12 @@ function renderCurrentMatchPage() {
         </div>
       </section>
 
-      <div class="matches-route-grid current-route-grid">
-        <aside class="panel match-switcher-deck current-match-queue">
-          <div class="section-head">
-            <div>
-              <span class="panel-kicker">Today and next</span>
-              <h3>Match runway</h3>
-              <p>The current page stays pinned to the next useful fixture, but the nearby queue is still one tap away.</p>
-            </div>
-          </div>
-          ${
-            queueMatches.length
-              ? `<div class="mini-fixture-list">${queueMatches
-                  .map((fixture, index) =>
-                    renderCurrentQueueRow(fixture, {
-                      current: match?.id === fixture.id,
-                      label:
-                        index === 0
-                          ? "Now"
-                          : isTodayMatch(fixture)
-                            ? "Today"
-                            : "Next",
-                    }),
-                  )
-                  .join("")}</div>`
-              : `<div class="empty-state">Sync fixtures to build the current-match queue.</div>`
-          }
-        </aside>
-
-        <div class="route-stack">
-          ${
-            match
-              ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
-              : `<section class="panel"><div class="empty-state">No actionable fixture is pinned yet. Browse the full fixture list to pick the match you want.</div></section>`
-          }
-        </div>
+      <div class="route-stack">
+        ${
+          match
+            ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
+            : `<section class="panel"><div class="empty-state">No actionable fixture is pinned yet. Browse the full fixture list to pick the match you want.</div></section>`
+        }
       </div>
     </section>
   `;
@@ -4098,58 +4067,6 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
         </aside>
 
         <div class="match-content-stack">
-          <section class="panel live-pulse-panel match-centre-panel panel-group-live" id="live-status-panel">
-            <div class="section-head">
-              <div>
-                <span class="panel-kicker">Live command</span>
-                <h4>Match state</h4>
-                <p>The clock, locks, sync freshness, and scoring state that matter right now.</p>
-              </div>
-            </div>
-            <div class="lock-strip match-pulse-strip">
-              <div class="lock-strip-card ${liveWindow.coreWindowOpen ? "is-live" : liveWindow.coreLocked ? "is-locked" : ""}">
-                <span>Player picks</span>
-                <strong>${liveWindow.coreLocked ? "Closed at 3.1" : "Open now"}</strong>
-                <p>One batsman, one bowler, one winner. Same batsman-bowler pair cannot repeat.</p>
-              </div>
-              <div class="lock-strip-card ${liveWindow.scoreWindowOpen ? "is-live" : liveWindow.scoreLocked ? "is-locked" : ""}">
-                <span>Score window</span>
-                <strong>${liveWindow.scoreWindowOpen ? "3.1 to 7.1 live" : liveWindow.scoreLocked ? "Locked at 7.1" : "Opens after 3.1"}</strong>
-                <p>One exact total per member. If nobody is exact, the single nearest score wins.</p>
-              </div>
-              <div class="lock-strip-card">
-                <span>Feed engine</span>
-                <strong>${escapeHtml(syncSummary.source)}</strong>
-                <p>${escapeHtml(syncSummary.playingXiLabel)}. Auto settlement kicks in when the official scorecard lands.</p>
-              </div>
-            </div>
-            <div class="match-info-grid">
-              <div class="context-card">
-                <span class="panel-kicker">Sync freshness</span>
-                <strong>${escapeHtml(syncSummary.freshnessLabel)}</strong>
-                <p>${escapeHtml(`${syncSummary.freshnessDetail} Last synced ${syncSummary.lastSynced}.`)}</p>
-              </div>
-              <div class="context-card">
-                <span class="panel-kicker">Availability</span>
-                <strong>${escapeHtml(
-                  status === "finalizing"
-                    ? "Match finished"
-                    : canEditScore
-                      ? "Score window open"
-                      : canEditCore
-                        ? "Core picks open"
-                        : "All prediction windows locked",
-                )}</strong>
-                <p>${escapeHtml(windowMessage)}</p>
-              </div>
-              <div class="context-card">
-                <span class="panel-kicker">Settlement</span>
-                <strong>${escapeHtml(syncSummary.settlementLabel)}</strong>
-                <p>${escapeHtml(syncSummary.settlementDetail)}</p>
-              </div>
-            </div>
-          </section>
-
           <section class="panel prediction-board match-centre-panel panel-group-picks" id="picks-board-panel">
             <div class="section-head">
               <div>
@@ -6589,17 +6506,21 @@ function parseOfficialTeamSquadHtml(source) {
 
 function extractOfficialPlayerImageFromHtml(block) {
   const source = String(block || "");
-  const fromSourceSet = decodeHtmlEntities(
-    source.match(/\bsrcset\s*=\s*"([^"]+)"/i)?.[1]?.split(",")?.[0]?.trim()?.split(/\s+/)?.[0] || "",
-  );
-  const raw =
-    decodeHtmlEntities(
-      source.match(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*"([^"]+)"/i)?.[1] ||
-        source.match(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*'([^']+)'/i)?.[1] ||
-        "",
-    ) || fromSourceSet;
+  const playerImageBlock =
+    source.match(/<div class="ih-p-img">([\s\S]*?)<\/div>/i)?.[1] || source;
 
-  return resolveOfficialPlayerImageUrl(raw);
+  const quotedCandidates = Array.from(
+    playerImageBlock.matchAll(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*"([^"]+)"/gi),
+  ).map((match) => decodeHtmlEntities(match[1]));
+  const singleQuotedCandidates = Array.from(
+    playerImageBlock.matchAll(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*'([^']+)'/gi),
+  ).map((match) => decodeHtmlEntities(match[1]));
+  const srcSetCandidate = decodeHtmlEntities(
+    playerImageBlock.match(/\bsrcset\s*=\s*"([^"]+)"/i)?.[1]?.split(",")?.[0]?.trim()?.split(/\s+/)?.[0] || "",
+  );
+
+  const candidates = [...quotedCandidates, ...singleQuotedCandidates, srcSetCandidate].filter(Boolean);
+  return resolveOfficialPlayerImageUrl(candidates[candidates.length - 1] || "");
 }
 
 function resolveOfficialPlayerImageUrl(value) {
