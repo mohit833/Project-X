@@ -684,17 +684,31 @@ async function ensureProfile() {
     "Player";
 
   const displayName = cleanText(fallbackName, 40);
+  const avatarUrl = cleanNullableText(getUserAvatarUrl(state.user), 1000);
 
-  const { error } = await state.client
+  const profilePayload = {
+    id: state.user.id,
+    display_name: displayName,
+    email: state.user.email || null,
+    avatar_url: avatarUrl,
+  };
+
+  let { error } = await state.client
     .from("profiles")
-    .upsert(
-      {
-        id: state.user.id,
-        display_name: displayName,
-        email: state.user.email || null,
-      },
-      { onConflict: "id" },
-    );
+    .upsert(profilePayload, { onConflict: "id" });
+
+  if (error && /avatar_url/i.test(`${error.message || ""} ${error.details || ""}`)) {
+    ({ error } = await state.client
+      .from("profiles")
+      .upsert(
+        {
+          id: state.user.id,
+          display_name: displayName,
+          email: state.user.email || null,
+        },
+        { onConflict: "id" },
+      ));
+  }
 
   if (error) {
     throw error;
@@ -848,8 +862,42 @@ async function loadLeagueBundle() {
     throw adjustmentsResult.error;
   }
 
+  const memberRows = membersResult.data || [];
+  const memberUserIds = Array.from(
+    new Set(memberRows.map((member) => member.user_id).filter(Boolean)),
+  );
+  let memberProfiles = [];
+
+  if (memberUserIds.length) {
+    const profilesResult = await state.client
+      .from("profiles")
+      .select("id, avatar_url")
+      .in("id", memberUserIds);
+
+    const avatarSupportMissing =
+      profilesResult.error &&
+      /avatar_url/i.test(
+        `${profilesResult.error.message || ""} ${profilesResult.error.details || ""}`,
+      );
+
+    if (profilesResult.error && !avatarSupportMissing) {
+      throw profilesResult.error;
+    }
+
+    memberProfiles = avatarSupportMissing ? [] : profilesResult.data || [];
+  }
+
+  const avatarUrlByUserId = new Map(
+    memberProfiles.map((profile) => [profile.id, cleanNullableText(profile.avatar_url, 1000)]),
+  );
+
   state.matches = (matchesResult.data || []).map((match) => normalizeMatchRecord(match));
-  state.members = membersResult.data || [];
+  state.members = memberRows.map((member) => ({
+    ...member,
+    avatar_url:
+      avatarUrlByUserId.get(member.user_id) ||
+      (member.user_id === state.user?.id ? cleanNullableText(getUserAvatarUrl(state.user), 1000) : null),
+  }));
   state.predictions = predictionsResult.data || [];
   state.pointAdjustments = adjustmentSupportMissing ? [] : adjustmentsResult.data || [];
   const validMatchIds = new Set(state.matches.map((match) => match.id));
@@ -2823,7 +2871,18 @@ function renderAccountPage() {
             <span class="tag tag-scheduled">${isAdmin ? "Admin" : "Account"}</span>
             <span class="subtle">${escapeHtml(state.user ? "Signed in" : "Not signed in")}</span>
           </div>
-          <strong class="broadcast-title">${escapeHtml(state.profile?.display_name || getUserIdentityLabel() || "Player profile")}</strong>
+          <div class="identity-stack">
+            ${renderMemberAvatar(
+              state.profile?.display_name || getUserIdentityLabel() || "Player profile",
+              "md",
+              "",
+              state.profile?.avatar_url || getUserAvatarUrl(state.user),
+            )}
+            <div class="identity-copy">
+              <strong class="broadcast-title">${escapeHtml(state.profile?.display_name || getUserIdentityLabel() || "Player profile")}</strong>
+              <span class="subtle">${escapeHtml(getUserIdentityLabel() || "League identity")}</span>
+            </div>
+          </div>
           <div class="broadcast-detail-row">
             <span class="chip"><strong>Leagues</strong>${escapeHtml(state.memberships.length || 0)}</span>
             <span class="chip"><strong>Status</strong>${escapeHtml(state.user ? "Ready" : "Needs sign-in")}</span>
@@ -2990,7 +3049,7 @@ function renderMembersPanel(title = "Players") {
                 (member) => `
                   <div class="member-item">
                     <div class="identity-stack">
-                      ${renderMemberAvatar(member.display_name, "sm")}
+                      ${renderMemberAvatar(member.display_name, "sm", "", member.avatar_url || "")}
                       <div class="identity-copy">
                         <strong>${escapeHtml(member.display_name)}</strong>
                         <span class="subtle">Joined ${escapeHtml(formatDate(member.joined_at, "date"))}</span>
@@ -4223,6 +4282,9 @@ function renderPredictionRow(entry) {
   const sameUser = entry.user_id === state.user?.id;
   const match = state.matches.find((item) => item.id === entry.match_id) || getSelectedMatch();
   const ownerName = entry.league_members?.display_name || "Player";
+  const ownerAvatarUrl =
+    getMemberRecord(entry.user_id)?.avatar_url ||
+    (sameUser ? state.profile?.avatar_url || getUserAvatarUrl(state.user) : "");
   const coreStamp = entry.core_submitted_at ? `Core ${formatDate(entry.core_submitted_at)}` : "Core pending";
   const scoreStamp = entry.score_submitted_at ? `Score ${formatDate(entry.score_submitted_at)}` : "Score pending";
 
@@ -4230,7 +4292,7 @@ function renderPredictionRow(entry) {
     <div class="entry-item prediction-row ${sameUser ? "current-user" : ""}">
       <div class="prediction-row-main">
         <div class="prediction-owner">
-          ${renderMemberAvatar(ownerName, "sm")}
+          ${renderMemberAvatar(ownerName, "sm", "", ownerAvatarUrl)}
           <div class="identity-copy">
             <div class="prediction-row-head">
               <strong>${escapeHtml(ownerName)}</strong>
@@ -5545,6 +5607,26 @@ function getUserIdentityLabel() {
   return state.user?.phone || state.user?.email || "";
 }
 
+function getUserAvatarUrl(user = state.user) {
+  return cleanText(
+    user?.user_metadata?.avatar_url ||
+      user?.user_metadata?.picture ||
+      user?.user_metadata?.picture_url ||
+      user?.identities?.[0]?.identity_data?.avatar_url ||
+      user?.identities?.[0]?.identity_data?.picture ||
+      "",
+    1000,
+  );
+}
+
+function getMemberRecord(userId) {
+  if (!userId) {
+    return null;
+  }
+
+  return state.members.find((member) => member.user_id === userId) || null;
+}
+
 function getTeamBrand(teamName) {
   const normalizedName = normalizeName(teamName || "");
   const resolvedKey = TEAM_BRAND_ALIASES[normalizedName] || normalizedName;
@@ -5606,12 +5688,18 @@ function renderTeamMark(teamName, size = "md", className = "") {
   `;
 }
 
-function renderMemberAvatar(displayName, size = "sm", className = "") {
+function renderMemberAvatar(displayName, size = "sm", className = "", avatarUrl = "") {
   const classes = ["member-avatar", `member-avatar-${size}`, className].filter(Boolean).join(" ");
+  const resolvedAvatarUrl = cleanText(avatarUrl, 1000);
 
   return `
     <span class="${classes}" style="${escapeAttribute(buildIdentityStyle(displayName))}">
-      ${escapeHtml(getDisplayInitials(displayName))}
+      ${
+        resolvedAvatarUrl
+          ? `<img src="${escapeAttribute(resolvedAvatarUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
+          : ""
+      }
+      <span class="member-avatar-fallback">${escapeHtml(getDisplayInitials(displayName))}</span>
     </span>
   `;
 }
@@ -6258,13 +6346,16 @@ function getHeroStatusLabel(focusMatch) {
 function renderLeaderboardRow(entry, index) {
   const sameUser = entry.user_id === state.user?.id;
   const displayName = entry.display_name || "Player";
+  const avatarUrl =
+    entry.avatar_url ||
+    (sameUser ? state.profile?.avatar_url || getUserAvatarUrl(state.user) : "");
 
   return `
     <div class="leaderboard-item ${sameUser ? "current-user" : ""} ${index < 3 ? `leaderboard-top leaderboard-top-${index + 1}` : ""}">
       <div class="leaderboard-main">
         <div class="leaderboard-headline">
           <div class="leaderboard-rank">${index + 1}</div>
-          ${renderMemberAvatar(displayName, "md")}
+          ${renderMemberAvatar(displayName, "md", "", avatarUrl)}
           <div class="leaderboard-summary">
             <div class="prediction-row-head">
               <strong>${escapeHtml(displayName)}</strong>
@@ -6273,17 +6364,6 @@ function renderLeaderboardRow(entry, index) {
             <div class="leaderboard-meta">
               <span class="subtle">${entry.matches_joined || 0} matches joined</span>
               <span class="subtle">${entry.role}</span>
-            </div>
-            <div class="leaderboard-breakdown">
-              <span class="chip"><strong>Bat</strong>${escapeHtml(entry.batsman_points ?? 0)}</span>
-              <span class="chip"><strong>Bowl</strong>${escapeHtml(entry.bowler_points ?? 0)}</span>
-              <span class="chip"><strong>Team</strong>${escapeHtml(entry.team_points ?? 0)}</span>
-              <span class="chip"><strong>Score</strong>${escapeHtml(entry.score_points ?? 0)}</span>
-              ${
-                entry.manual_points
-                  ? `<span class="chip"><strong>Manual</strong>${escapeHtml(entry.manual_points)}</span>`
-                  : ""
-              }
             </div>
           </div>
         </div>
@@ -6301,6 +6381,7 @@ function buildLeaderboardFromMatches(members, predictions, matches, pointAdjustm
     league_id: member.league_id,
     user_id: member.user_id,
     display_name: member.display_name,
+    avatar_url: member.avatar_url || null,
     role: member.role,
     matches_joined: 0,
     batsman_points: 0,

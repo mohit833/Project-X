@@ -886,9 +886,19 @@ button {
   filter: drop-shadow(0 6px 10px rgba(4, 8, 18, 0.18));
 }
 
+.member-avatar img {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .team-mark-fallback,
 .player-avatar-fallback,
-.member-avatar {
+.member-avatar,
+.member-avatar-fallback {
   color: #ffffff;
   font-family: var(--font-display);
   font-weight: 800;
@@ -896,7 +906,8 @@ button {
 }
 
 .team-mark img + .team-mark-fallback,
-.player-avatar img + .player-avatar-fallback {
+.player-avatar img + .player-avatar-fallback,
+.member-avatar img + .member-avatar-fallback {
   position: absolute;
   inset: auto;
   opacity: 0.18;

@@ -98,9 +98,12 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   display_name text not null check (char_length(trim(display_name)) between 2 and 40),
   email text,
+  avatar_url text,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.profiles add column if not exists avatar_url text;
 
 create table if not exists public.leagues (
   id uuid primary key default gen_random_uuid(),
