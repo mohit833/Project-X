@@ -1643,10 +1643,6 @@ function renderMatchesSectionTabs(route) {
     { key: "picks", label: "Picks Board" },
   ];
 
-  if (currentMembership()?.role === "admin") {
-    sections.push({ key: "admin", label: "Admin" });
-  }
-
   return `
     <div class="page-tabs">
       ${sections
@@ -1964,17 +1960,16 @@ function renderCurrentMatchPage() {
               ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
               : `<section class="panel"><div class="empty-state">No actionable fixture is pinned yet. Browse the full fixture list to pick the match you want.</div></section>`
           }
-          ${match ? renderCurrentMatchSupport(match, isAdmin, leagueEnded) : ""}
-          ${isAdmin && match && !leagueEnded ? renderAdminTools(match) : ""}
+          ${match ? renderCurrentMatchSupport(match) : ""}
         </div>
       </div>
     </section>
   `;
 }
 
-function renderCurrentMatchSupport(match, isAdmin, leagueEnded = false) {
+function renderCurrentMatchSupport(match) {
   const entries = getPredictionsForMatch(match.id);
-  const picksPanel = `
+  return `
     <section class="panel prediction-board current-match-picks-panel">
       <div class="section-head">
         <div>
@@ -1988,64 +1983,6 @@ function renderCurrentMatchSupport(match, isAdmin, leagueEnded = false) {
           ? `<div class="entry-list">${entries.map((entry) => renderPredictionRow(entry)).join("")}</div>`
           : `<div class="empty-state">No one has posted picks for this fixture yet.</div>`
       }
-    </section>
-  `;
-
-  if (!isAdmin || leagueEnded) {
-    return picksPanel;
-  }
-
-  return `
-    <div class="current-match-support-grid">
-      ${picksPanel}
-      ${renderCurrentMatchAdminCancelPanel(match)}
-    </div>
-  `;
-}
-
-function renderCurrentMatchAdminCancelPanel(match) {
-  const status = computeMatchStatus(match);
-  const cancelling = state.cancellingMatchIds.has(match.id);
-  const isCancelled = status === "cancelled";
-
-  return `
-    <section class="panel admin-card current-match-admin-panel">
-      <div class="section-head">
-        <div>
-          <span class="panel-kicker">Admin action</span>
-          <h4>Cancel this fixture</h4>
-          <p>Use this only when rain or an official abandonment means the match should not count toward leaderboard scoring.</p>
-        </div>
-      </div>
-      <div class="chip-list">
-        <span class="chip"><strong>Status</strong>${escapeHtml(labelizeStatus(status))}</span>
-        <span class="chip"><strong>Effect</strong>No points count</span>
-        <span class="chip"><strong>Result row</strong>${isCancelled ? "Removed" : "Will be removed"}</span>
-      </div>
-      <div class="current-match-admin-actions">
-        <button
-          class="ghost-btn danger-btn"
-          type="button"
-          data-action="cancel-match"
-          data-match-id="${match.id}"
-          ${cancelling || isCancelled ? "disabled" : ""}
-        >
-          ${
-            isCancelled
-              ? "Match cancelled"
-              : cancelling
-                ? "Cancelling..."
-                : "Cancel match"
-          }
-        </button>
-      </div>
-      <p class="footnote">
-        ${
-          isCancelled
-            ? "This fixture is already cancelled. Any previously settled points from it no longer contribute to the leaderboard."
-            : "Once cancelled, settlement stops, the match result is cleared, and any points from this fixture disappear from total points."
-        }
-      </p>
     </section>
   `;
 }
@@ -2395,9 +2332,20 @@ function renderMatchesPage(route) {
             ${
               section === "picks"
                 ? renderPicksBoardPanel(match)
-                : isAdmin
-                  ? renderAdminTools(match)
-                  : `<section class="panel"><div class="empty-state">Only league admins can open the admin console.</div></section>`
+                : `
+                  <section class="panel">
+                    <div class="section-head">
+                      <div>
+                        <h3>Admin tools moved</h3>
+                        <p>All admin-only actions now live under the Admin/Profile route so the match experience stays focused on picks, live state, and results.</p>
+                      </div>
+                    </div>
+                    <div class="split-line">
+                      <a class="btn" href="${buildRouteHref({ page: "account" })}">${isAdmin ? "Open Admin/Profile" : "Open Profile"}</a>
+                      <span class="subtle">${isAdmin ? "Sync, recovery, cancellation, and leaderboard edits now live there." : "Only admins can use that console."}</span>
+                    </div>
+                  </section>
+                `
             }
           `
       }
@@ -2666,11 +2614,6 @@ function renderMatchCentreQuickNav(match, isAdmin, hasResult) {
           `,
         )
         .join("")}
-      ${
-        isAdmin
-          ? `<a class="ghost-btn match-centre-tab match-centre-tab-link" href="${buildRouteHref({ page: "matches", section: "admin", matchId: match.id })}">Admin</a>`
-          : ""
-      }
     </div>
   `;
 }
@@ -2844,7 +2787,6 @@ function renderLeaguePage() {
           ${renderMembersPanel("League Squad")}
         </div>
       </div>
-      ${isAdmin && !leagueEnded ? renderAdminTools(match) : ""}
     </section>
   `;
 }
@@ -2852,6 +2794,9 @@ function renderLeaguePage() {
 function renderAccountPage() {
   const isAdmin = currentMembership()?.role === "admin";
   const actionMatch = getCurrentActionMatch();
+  const adminMatch =
+    getSelectedMatch() || actionMatch || sortMatchesChronologically(state.matches)[0] || null;
+  const leagueEnded = getActiveLeague()?.status === "archived";
 
   return `
     <section class="route-stack">
@@ -2895,13 +2840,7 @@ function renderAccountPage() {
                 { page: "current" },
                 "Today first",
                 "Current Match",
-                "Go straight to the fixture that still needs attention, then run sync or recovery from there.",
-              )}
-              ${renderQuickLinkCard(
-                { page: "matches", section: "admin", matchId: actionMatch?.id || getSelectedMatch()?.id },
-                "League ops",
-                "Admin Console",
-                "Open manual sync, point calculation, recovery, and fixture controls without digging through the full schedule.",
+                "Go straight to the fixture that still needs attention. The admin controls themselves stay on this page now.",
               )}
               ${renderQuickLinkCard(
                 { page: "matches", section: "fixtures", matchId: actionMatch?.id || getSelectedMatch()?.id },
@@ -2923,12 +2862,78 @@ function renderAccountPage() {
         <div class="profile-route-stack">
         ${renderAccountPanel()}
         ${renderPredictionWindowsPanel()}
-      </div>
+        </div>
       <div class="profile-route-stack">
         ${renderLeagueAccessPanel()}
         ${renderScoringPanel()}
       </div>
       </div>
+      ${isAdmin ? renderAdminConsoleWorkspace(adminMatch, leagueEnded) : ""}
+    </section>
+  `;
+}
+
+function renderAdminConsoleWorkspace(match, leagueEnded) {
+  if (!state.activeLeagueId) {
+    return "";
+  }
+
+  return `
+    <section class="route-stack">
+      <section class="panel match-switcher-deck">
+        <div class="section-head">
+          <div>
+            <span class="panel-kicker">Admin only</span>
+            <h3>Admin console</h3>
+            <p>Sync, recovery, cancellation, and leaderboard edits all live here now so the rest of the app stays cleaner for matchday users.</p>
+          </div>
+        </div>
+        ${
+          state.matches.length
+            ? `
+              <div class="match-rail match-rail-horizontal">
+                ${state.matches
+                  .map(
+                    (fixture) => `
+                      <button
+                        class="match-rail-item ${fixture.id === match?.id ? "active" : ""}"
+                        type="button"
+                        data-action="select-match"
+                        data-match-id="${fixture.id}"
+                      >
+                        <span class="match-rail-title">
+                          <span class="match-rail-clash">
+                            <span class="mini-fixture-team">
+                              ${renderTeamMark(fixture.team_a, "xs")}
+                              <strong>${escapeHtml(getTeamShortCode(fixture.team_a))}</strong>
+                            </span>
+                            <span class="mini-fixture-divider">vs</span>
+                            <span class="mini-fixture-team mini-fixture-team-away">
+                              ${renderTeamMark(fixture.team_b, "xs")}
+                              <strong>${escapeHtml(getTeamShortCode(fixture.team_b))}</strong>
+                            </span>
+                          </span>
+                        </span>
+                        <span class="match-rail-meta">${escapeHtml(formatFixtureDayLabel(fixture.starts_at))} · ${escapeHtml(labelizeStatus(computeMatchStatus(fixture)))}</span>
+                      </button>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            `
+            : `<div class="empty-state">Sync the IPL schedule first to unlock match-specific admin tools.</div>`
+        }
+      </section>
+      ${
+        match
+          ? renderMatchSummaryStrip(match)
+          : `<section class="panel"><div class="empty-state">Choose a fixture above to open the admin console for that match.</div></section>`
+      }
+      ${
+        leagueEnded
+          ? `<section class="panel"><div class="empty-state">This league is archived, so admin controls are frozen and the room now acts as the final record.</div></section>`
+          : renderAdminTools(match)
+      }
     </section>
   `;
 }
@@ -4405,7 +4410,7 @@ function renderAdminTools(match) {
                   <span class="chip"><strong>Saved in DB</strong>Yes</span>
                 </div>
                 <form class="form-grid" id="leaderboard-adjustment-form">
-                  <input type="hidden" name="league_id" value="${match.league_id}" />
+                  <input type="hidden" name="league_id" value="${match?.league_id || state.activeLeagueId || ""}" />
                   <div class="field span-2">
                     <label for="leaderboard-adjustment-member">Member</label>
                     <select id="leaderboard-adjustment-member" name="target_user_id">
@@ -4459,6 +4464,47 @@ function renderAdminTools(match) {
                     <button class="btn" type="submit">Save leaderboard adjustment</button>
                   </div>
                 </form>
+              </div>
+              <div class="admin-card">
+                <div class="section-head">
+                  <div>
+                    <h4>Match cancellation</h4>
+                    <p>Use this only when the fixture is officially abandoned or should not count at all. Once cancelled, any points from this match disappear from the leaderboard.</p>
+                  </div>
+                </div>
+                ${
+                  match
+                    ? `
+                      <div class="chip-list">
+                        <span class="chip"><strong>Status</strong>${escapeHtml(labelizeStatus(selectedMatchStatus))}</span>
+                        <span class="chip"><strong>Effect</strong>No points count</span>
+                        <span class="chip"><strong>Result row</strong>${selectedMatchStatus === "cancelled" ? "Removed" : "Will be removed"}</span>
+                      </div>
+                      <div class="split-line" style="margin-top: 1rem;">
+                        <button
+                          class="ghost-btn danger-btn"
+                          type="button"
+                          data-action="cancel-match"
+                          data-match-id="${match.id}"
+                          ${state.cancellingMatchIds.has(match.id) || selectedMatchStatus === "cancelled" ? "disabled" : ""}
+                        >
+                          ${
+                            selectedMatchStatus === "cancelled"
+                              ? "Match cancelled"
+                              : state.cancellingMatchIds.has(match.id)
+                                ? "Cancelling..."
+                                : "Cancel match"
+                          }
+                        </button>
+                        <span class="subtle">${
+                          selectedMatchStatus === "cancelled"
+                            ? "This fixture is already cancelled, and its points no longer count anywhere."
+                            : "This clears the settled result and removes this fixture from all leaderboard totals."
+                        }</span>
+                      </div>
+                    `
+                    : `<div class="empty-state">Choose a fixture above to unlock cancellation controls.</div>`
+                }
               </div>
               <div class="admin-card">
                 <div class="section-head">
