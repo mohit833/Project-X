@@ -2325,9 +2325,9 @@ body[data-theme="light"] .hero {
 .page-masthead-inner {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 24px;
-  padding: 22px 0 68px;
+  align-items: start;
+  gap: 18px 24px;
+  padding: 22px 0 32px;
 }
 
 .page-breadcrumbs {
@@ -2368,16 +2368,19 @@ body[data-theme="light"] .hero {
 }
 
 .page-tabs {
+  grid-column: 1 / -1;
   display: inline-flex;
   flex-wrap: wrap;
   gap: 8px;
-  align-self: end;
-  justify-self: end;
+  align-self: start;
+  justify-self: start;
+  margin-top: 6px;
   padding: 8px;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 18px 36px rgba(11, 24, 61, 0.2);
-  transform: translateY(36px);
+  position: relative;
+  z-index: 2;
 }
 
 .page-tab {
@@ -2403,6 +2406,10 @@ body[data-theme="light"] .hero {
   display: grid;
   gap: 24px;
   padding: 56px 0 84px;
+}
+
+.page-masthead-matches + .route-main {
+  padding-top: 24px;
 }
 
 .route-stack {
@@ -3185,7 +3192,7 @@ body[data-theme="light"] .match-rail-item.active {
 
   .page-tabs {
     justify-self: start;
-    transform: translateY(24px);
+    margin-top: 4px;
   }
 
   .route-grid-standings > :last-child {
@@ -3299,7 +3306,7 @@ body[data-theme="light"] .match-rail-item.active {
 
   .page-tabs {
     width: 100%;
-    transform: translateY(18px);
+    margin-top: 2px;
   }
 
   .page-tab {
