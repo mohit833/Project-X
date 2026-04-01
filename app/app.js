@@ -115,6 +115,7 @@ const state = {
   autoSyncTimer: null,
   autoSyncBusy: false,
   lastAutoSyncKickAt: 0,
+  lastForegroundRefreshAt: 0,
   probingMatchIds: new Set(),
   matchStatusProbeTimes: {},
   providerFixtures: [],
@@ -154,6 +155,7 @@ const LEAGUE_REFRESH_THROTTLE_MS = 10 * 60 * 1000;
 const AUTO_SYNC_RESUME_THROTTLE_MS = 10 * 60 * 1000;
 const MATCH_STATUS_PROBE_STALE_MS = 10 * 60 * 1000;
 const MATCH_STATUS_PROBE_THROTTLE_MS = 10 * 60 * 1000;
+const FOREGROUND_REFRESH_THROTTLE_MS = 45 * 1000;
 const DEMO_MATCHES = [
   {
     id: "match-1",
@@ -1187,6 +1189,7 @@ function teardownRealtime() {
 }
 
 function setupAutoSync() {
+  const shouldKickImmediately = !state.autoSyncTimer;
   teardownAutoSync();
 
   if (!state.user || currentMembership()?.role !== "admin" || state.demoMode) {
@@ -1199,7 +1202,9 @@ function setupAutoSync() {
   }
 
   const intervalMs = getSyncPollingIntervalMs();
-  requestAutoSync({ force: true });
+  if (shouldKickImmediately) {
+    requestAutoSync({ force: true });
+  }
   state.autoSyncTimer = window.setInterval(() => {
     requestAutoSync();
   }, intervalMs);
@@ -1225,7 +1230,6 @@ function teardownLeagueRefresh() {
   }
 
   state.leagueRefreshBusy = false;
-  state.lastLeagueRefreshKickAt = 0;
 }
 
 function teardownAutoSync() {
@@ -1233,8 +1237,6 @@ function teardownAutoSync() {
     window.clearInterval(state.autoSyncTimer);
     state.autoSyncTimer = null;
   }
-
-  state.lastAutoSyncKickAt = 0;
 }
 
 function canAutoSyncMatches() {
@@ -1307,11 +1309,24 @@ function handleAutoSyncVisibilityChange() {
     return;
   }
 
-  requestLeagueRefresh();
-  requestAutoSync();
+  requestForegroundRefresh();
 }
 
 function handleAutoSyncResume() {
+  requestForegroundRefresh();
+}
+
+function requestForegroundRefresh() {
+  if (document.hidden || isPredictionFormActive() || state.playerPicker) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - state.lastForegroundRefreshAt < FOREGROUND_REFRESH_THROTTLE_MS) {
+    return;
+  }
+
+  state.lastForegroundRefreshAt = now;
   requestLeagueRefresh();
   requestAutoSync();
 }
