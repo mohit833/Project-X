@@ -2093,7 +2093,7 @@ body[data-theme="light"] .hero {
   min-height: 52px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
 }
 
@@ -2187,24 +2187,17 @@ body[data-theme="light"] .hero {
 }
 
 .site-brand-copy p {
-  margin: 4px 0 0;
-  color: rgba(255, 255, 255, 0.74);
-  font-size: 0.92rem;
+  display: none;
 }
 
 .primary-nav {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   gap: 8px;
   flex-wrap: nowrap;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.primary-nav::-webkit-scrollbar {
-  display: none;
+  overflow: visible;
 }
 
 .primary-nav-link {
@@ -2258,28 +2251,15 @@ body[data-theme="light"] .hero {
   min-width: 0;
 }
 
-.site-actions .chip {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.78);
-  max-width: min(32vw, 420px);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.site-actions .chip strong {
-  color: #ffffff;
-}
-
 .theme-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 118px;
-  padding: 12px 16px;
+  width: 48px;
+  height: 48px;
+  padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
   font-weight: 700;
@@ -2289,6 +2269,11 @@ body[data-theme="light"] .hero {
 .theme-toggle:hover {
   transform: translateY(-1px);
   background: rgba(255, 255, 255, 0.16);
+}
+
+.theme-toggle-icon {
+  font-size: 1.15rem;
+  line-height: 1;
 }
 
 .page-masthead {
@@ -2380,13 +2365,6 @@ body[data-theme="light"] .hero {
   margin: 0;
   font-family: var(--font-display);
   font-size: clamp(2.2rem, 5vw, 3.6rem);
-}
-
-.page-masthead-copy p {
-  margin: 0;
-  max-width: 70ch;
-  color: rgba(255, 255, 255, 0.78);
-  line-height: 1.65;
 }
 
 .page-tabs {
@@ -3276,13 +3254,26 @@ body[data-theme="light"] .match-rail-item.active {
   }
 
   .utility-copy,
-  .utility-actions,
-  .site-actions {
+  .utility-actions {
     width: 100%;
+  }
+
+  .site-actions {
+    width: auto;
   }
 
   .site-brand {
     align-items: flex-start;
+  }
+
+  .utility-label,
+  .utility-separator {
+    display: none;
+  }
+
+  .utility-copy {
+    font-size: 0.88rem;
+    line-height: 1.5;
   }
 
   .primary-nav {

@@ -1442,22 +1442,6 @@ function render() {
             <span class="utility-separator"></span>
             <span>${escapeHtml(getUtilityMessage())}</span>
           </div>
-          <div class="utility-actions">
-            ${
-              state.activeLeagueId
-                ? `<span class="utility-chip"><strong>League</strong>${escapeHtml(
-                    getActiveLeague()?.name || "League room",
-                  )}</span>`
-                : ""
-            }
-            ${
-              state.user
-                ? `<span class="utility-chip"><strong>Player</strong>${escapeHtml(
-                    state.profile?.display_name || getUserIdentityLabel() || "Player",
-                  )}</span>`
-                : `<span class="utility-chip"><strong>Access</strong>Sign in to save leagues</span>`
-            }
-          </div>
         </div>
       </div>
 
@@ -1467,11 +1451,6 @@ function render() {
             <div class="site-brand-mark">IPL</div>
             <div class="site-brand-copy">
               <h1>${escapeHtml(state.appName)}</h1>
-              <p>${escapeHtml(
-                state.demoMode
-                  ? "Interactive demo with live-style league flows"
-                  : "Live picks, score calls, and season standings",
-              )}</p>
             </div>
           </div>
 
@@ -1480,8 +1459,14 @@ function render() {
           </nav>
 
           <div class="site-actions">
-            <button class="theme-toggle" type="button" data-action="toggle-theme">
-              <span>${state.theme === "dark" ? "Light mode" : "Dark mode"}</span>
+            <button
+              class="theme-toggle"
+              type="button"
+              data-action="toggle-theme"
+              aria-label="${escapeAttribute(state.theme === "dark" ? "Switch to light mode" : "Switch to dark mode")}"
+              title="${escapeAttribute(state.theme === "dark" ? "Switch to light mode" : "Switch to dark mode")}"
+            >
+              <span class="theme-toggle-icon" aria-hidden="true">${state.theme === "dark" ? "☀" : "☾"}</span>
             </button>
             ${
               state.installPromptEvent && !state.isStandalone
@@ -1491,9 +1476,6 @@ function render() {
             ${
               state.user
                 ? `
-                  <span class="chip"><strong>${escapeHtml(
-                    state.profile?.display_name || getUserIdentityLabel() || "Player",
-                  )}</strong>${escapeHtml(getUserIdentityLabel())}</span>
                   ${
                     state.demoMode
                       ? ""
@@ -1512,7 +1494,6 @@ function render() {
           <div class="page-masthead-copy">
             <span class="page-kicker">${escapeHtml(routeMeta.kicker)}</span>
             <h2>${escapeHtml(routeMeta.title)}</h2>
-            <p>${escapeHtml(routeMeta.description)}</p>
           </div>
           ${route.page === "matches" ? renderMatchesSectionTabs(route) : ""}
         </div>
