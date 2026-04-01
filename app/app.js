@@ -2545,8 +2545,6 @@ function renderMatchCentreQuickNav(match, isAdmin, hasResult) {
   const tabs = MATCH_CENTRE_PANELS.filter(
     (panel) => !panel.requiresResult || hasResult,
   );
-  const status = computeMatchStatus(match);
-  const cancelling = state.cancellingMatchIds.has(match.id);
 
   return `
     <div class="match-centre-quick-nav" role="tablist" aria-label="Match centre sections">
@@ -2569,28 +2567,7 @@ function renderMatchCentreQuickNav(match, isAdmin, hasResult) {
         .join("")}
       ${
         isAdmin
-          ? `
-            <a class="ghost-btn match-centre-tab match-centre-tab-link" href="${buildRouteHref({
-              page: "matches",
-              section: "admin",
-              matchId: match.id,
-            })}">Admin</a>
-            <button
-              class="ghost-btn match-centre-tab danger-btn"
-              type="button"
-              data-action="cancel-match"
-              data-match-id="${match.id}"
-              ${cancelling || status === "cancelled" ? "disabled" : ""}
-            >
-              ${
-                status === "cancelled"
-                  ? "Match cancelled"
-                  : cancelling
-                    ? "Cancelling..."
-                    : "Cancel match"
-              }
-            </button>
-          `
+          ? `<a class="ghost-btn match-centre-tab match-centre-tab-link" href="${buildRouteHref({ page: "matches", section: "admin", matchId: match.id })}">Admin</a>`
           : ""
       }
     </div>
