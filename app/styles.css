@@ -1056,29 +1056,30 @@ button {
 }
 
 .prediction-row {
+  display: grid;
+  gap: 18px;
+  padding: 20px 22px;
   border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(114, 242, 201, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.025)),
+    rgba(7, 18, 35, 0.74);
 }
 
 .prediction-row.current-user {
   border-color: rgba(114, 242, 201, 0.22);
-  background: rgba(114, 242, 201, 0.08);
+  background:
+    radial-gradient(circle at top right, rgba(114, 242, 201, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(114, 242, 201, 0.08), rgba(114, 242, 201, 0.03)),
+    rgba(7, 18, 35, 0.78);
 }
 
 .prediction-row-head {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.prediction-row {
-  align-items: stretch;
-}
-
-.prediction-row-main {
-  flex: 1 1 auto;
-  display: grid;
-  gap: 14px;
-  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .prediction-owner {
@@ -1087,35 +1088,48 @@ button {
   gap: 12px;
 }
 
-.prediction-pair-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.player-cardlet {
+.prediction-row-header {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
 }
 
-.prediction-row-side {
-  min-width: min(280px, 100%);
+.prediction-owner-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.prediction-call-grid {
   display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  align-content: start;
-  justify-items: end;
 }
 
-.prediction-team-pill {
-  display: inline-flex;
+.prediction-call-card {
+  min-height: 104px;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+    rgba(255, 255, 255, 0.02);
+}
+
+.prediction-call-card-player,
+.prediction-call-card-team {
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
 }
 
-.prediction-row-side .entry-meta {
-  justify-content: flex-end;
+.prediction-call-card-score strong {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  line-height: 1;
 }
 
 .prediction-score-call strong,
@@ -1694,17 +1708,18 @@ button {
   }
 
   .selection-overview-grid,
-  .prediction-pair-grid {
+  .prediction-call-grid {
     grid-template-columns: 1fr;
   }
 
-  .prediction-row-side {
+  .prediction-row-header {
     width: 100%;
-    justify-items: flex-start;
+    align-items: flex-start;
+    justify-content: flex-start;
   }
 
-  .prediction-row-side .entry-meta {
-    justify-content: flex-start;
+  .prediction-call-card {
+    min-height: auto;
   }
 
   .mini-fixture-team-away {
@@ -2704,9 +2719,8 @@ body[data-theme="light"] .match-rail-item.active {
 }
 
 .match-summary-strip {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
+  display: grid;
+  gap: 8px;
   align-items: flex-start;
 }
 
@@ -2719,14 +2733,6 @@ body[data-theme="light"] .match-rail-item.active {
 .match-summary-strip p {
   margin: 8px 0 0;
   color: var(--text-muted);
-}
-
-.match-summary-chips {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
-  max-width: 520px;
 }
 
 .match-command-shell {

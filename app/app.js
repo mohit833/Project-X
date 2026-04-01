@@ -2550,20 +2550,12 @@ function renderMatchSummaryStrip(match) {
     `;
   }
 
-  const liveWindow = getLiveWindowState(match, getCurrentUserPrediction(match.id));
-  const summary = getMatchSyncSummary(match);
-
   return `
     <section class="panel match-summary-strip">
       <div>
         <span class="panel-kicker">${escapeHtml(labelizeStatus(computeMatchStatus(match)))}</span>
         <h3>${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h3>
         <p>${escapeHtml(match.venue || "Venue TBD")} · ${escapeHtml(formatDate(match.starts_at))}</p>
-      </div>
-      <div class="match-summary-chips">
-        <span class="chip"><strong>Window</strong>${escapeHtml(liveWindow.scoreWindowOpen ? "Score phase" : liveWindow.coreWindowOpen ? "Player picks" : "Locked")}</span>
-        <span class="chip"><strong>Clock</strong>${escapeHtml(summary?.inningsClock || "Waiting")}</span>
-        <span class="chip"><strong>Posted picks</strong>${escapeHtml(getPredictionsForMatch(match.id).length)}</span>
       </div>
     </section>
   `;
@@ -3897,16 +3889,6 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
               </div>
             </div>
           </div>
-          <div class="match-command-info-grid">
-            <span class="chip"><strong>Live</strong>${escapeHtml(syncSummary.liveClock)}</span>
-            <span class="chip"><strong>Core</strong>${escapeHtml(formatCoreLockLabel(match, liveWindow))}</span>
-            <span class="chip"><strong>Score</strong>${escapeHtml(formatScoreLockLabel(match, liveWindow))}</span>
-            <span class="chip is-${escapeAttribute(syncSummary.freshnessTone)}"><strong>Freshness</strong>${escapeHtml(syncSummary.freshnessLabel)}</span>
-            <span class="chip is-${escapeAttribute(syncSummary.settlementTone)}"><strong>Settlement</strong>${escapeHtml(syncSummary.settlementLabel)}</span>
-            <span class="chip"><strong>Last synced</strong>${escapeHtml(syncSummary.lastSynced)}</span>
-            <span class="chip"><strong>Picks posted</strong>${escapeHtml(entries.length)}</span>
-            <span class="chip"><strong>Venue</strong>${escapeHtml(match.venue || "Venue TBD")}</span>
-          </div>
           ${renderMatchCentreQuickNav(match, isAdmin, Boolean(scoreResult))}
         </div>
         <aside class="match-command-status-card">
@@ -4121,24 +4103,6 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
               }
             </section>
 
-            <section class="panel engine-panel match-centre-panel panel-group-live" id="engine-panel">
-              <div class="section-head">
-                <div>
-                  <span class="panel-kicker">Automation</span>
-                  <h4>Match engine</h4>
-                  <p>The clock, squad sync, and final settlement all run from the same live engine.</p>
-                </div>
-              </div>
-              <div class="chip-list">
-                <span class="chip"><strong>Series</strong>${escapeHtml(match.series_name || "IPL")}</span>
-                <span class="chip"><strong>Auto sync</strong>${match.auto_sync_enabled ? "On" : "Off"}</span>
-                <span class="chip"><strong>Provider ID</strong>${escapeHtml(match.external_match_id || "Manual match")}</span>
-                <span class="chip"><strong>1st innings clock</strong>${escapeHtml(syncSummary.liveClock)}</span>
-              </div>
-              <p class="footnote">
-                The 3.1 and 7.1 locks use the official first-innings ball count whenever it is available. Admin tools can correct the shared match engine, but once a window closes it closes for everyone.
-              </p>
-            </section>
           </div>
 
           ${
@@ -4187,7 +4151,7 @@ function renderPredictionRow(entry) {
 
   return `
     <div class="entry-item prediction-row ${sameUser ? "current-user" : ""}">
-      <div class="prediction-row-main">
+      <div class="prediction-row-header">
         <div class="prediction-owner">
           ${renderMemberAvatar(ownerName, "sm", "", ownerAvatarUrl)}
           <div class="identity-copy">
@@ -4195,42 +4159,38 @@ function renderPredictionRow(entry) {
               <strong>${escapeHtml(ownerName)}</strong>
               ${sameUser ? `<span class="tag tag-member">You</span>` : ""}
             </div>
-            <div class="entry-meta">
+            <div class="prediction-owner-meta">
               <span class="subtle">${escapeHtml(coreStamp)}</span>
               <span class="subtle">${escapeHtml(scoreStamp)}</span>
             </div>
           </div>
         </div>
-        <div class="prediction-pair-grid">
-          <div class="player-cardlet">
-            ${renderPlayerAvatar(match, entry.batsman_name, { size: "sm" })}
-            <div class="identity-copy">
-              <span class="subtle">Batsman</span>
-              <strong>${escapeHtml(entry.batsman_name || "-")}</strong>
-            </div>
-          </div>
-          <div class="player-cardlet">
-            ${renderPlayerAvatar(match, entry.bowler_name, { size: "sm" })}
-            <div class="identity-copy">
-              <span class="subtle">Bowler</span>
-              <strong>${escapeHtml(entry.bowler_name || "-")}</strong>
-            </div>
+      </div>
+      <div class="prediction-call-grid">
+        <div class="prediction-call-card prediction-call-card-player">
+          ${renderPlayerAvatar(match, entry.batsman_name, { size: "sm" })}
+          <div class="identity-copy">
+            <span class="subtle">Batsman</span>
+            <strong>${escapeHtml(entry.batsman_name || "-")}</strong>
           </div>
         </div>
-      </div>
-      <div class="prediction-row-side">
-        <div class="prediction-team-pill">
+        <div class="prediction-call-card prediction-call-card-player">
+          ${renderPlayerAvatar(match, entry.bowler_name, { size: "sm" })}
+          <div class="identity-copy">
+            <span class="subtle">Bowler</span>
+            <strong>${escapeHtml(entry.bowler_name || "-")}</strong>
+          </div>
+        </div>
+        <div class="prediction-call-card prediction-call-card-team">
           ${entry.team_pick ? renderTeamMark(entry.team_pick, "xs") : ""}
           <div class="identity-copy">
             <span class="subtle">Winner</span>
             <strong>${escapeHtml(entry.team_pick || "-")}</strong>
           </div>
         </div>
-        <div class="entry-stats prediction-score-call">
+        <div class="prediction-call-card prediction-call-card-score">
+          <span class="subtle">Score call</span>
           <strong>${escapeHtml(entry.predicted_score ?? "-")}</strong>
-          <div class="entry-meta">
-            <span class="subtle">Score call</span>
-          </div>
         </div>
       </div>
     </div>
