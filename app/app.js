@@ -133,6 +133,7 @@ const state = {
   theme: readStoredTheme(),
   selectedMatchId: null,
   predictionScorecardMatchId: null,
+  playerPicker: null,
   activeMatchCentrePanel: "prediction",
   fixtureFilters: {
     team: "all",
@@ -922,6 +923,9 @@ async function loadLeagueBundle() {
   if (state.predictionScorecardMatchId && !validMatchIds.has(state.predictionScorecardMatchId)) {
     state.predictionScorecardMatchId = null;
   }
+  if (state.playerPicker?.matchId && !validMatchIds.has(state.playerPicker.matchId)) {
+    state.playerPicker = null;
+  }
   state.leaderboard = buildLeaderboardFromMatches(
     state.members,
     state.predictions,
@@ -1054,6 +1058,7 @@ function navigateToRoute(route, { scrollToTop = true } = {}) {
 
   state.route = nextRoute;
   state.predictionScorecardMatchId = null;
+  state.playerPicker = null;
   if (nextRoute.matchId) {
     state.selectedMatchId = nextRoute.matchId;
   }
@@ -1073,6 +1078,7 @@ function navigateToRoute(route, { scrollToTop = true } = {}) {
 function handleHashChange() {
   state.route = readRouteState();
   state.predictionScorecardMatchId = null;
+  state.playerPicker = null;
   syncRouteSelection();
   render();
 }
@@ -1495,6 +1501,7 @@ function render() {
       </main>
       ${renderMobilePrimaryNav(route)}
       ${renderPredictionScorecardDialog()}
+      ${renderPlayerPickerDialog()}
     </div>
   `;
 
@@ -3947,20 +3954,22 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                     <form class="form-grid" id="core-prediction-form">
                       <input type="hidden" name="match_id" value="${match.id}" />
                       ${renderPredictionPlayerInput({
+                        match,
                         fieldId: `batsman-name-${match.id}`,
                         fieldName: "batsman_name",
                         label: "Batsman",
-                        placeholder: "Search or type a batsman",
+                        placeholder: "Choose your batsman",
                         groups: batsmanOptions,
                         selectedValue: editablePrediction?.batsman_name || "",
                         disabled: !canEditCore || !hasSquad,
                         helperText: `${getSelectablePlayerCount(batsmanOptions)} official batting options`,
                       })}
                       ${renderPredictionPlayerInput({
+                        match,
                         fieldId: `bowler-name-${match.id}`,
                         fieldName: "bowler_name",
                         label: "Bowler",
-                        placeholder: "Search or type a bowler",
+                        placeholder: "Choose your bowler",
                         groups: bowlerOptions,
                         selectedValue: editablePrediction?.bowler_name || "",
                         disabled: !canEditCore || !hasSquad,
@@ -5511,6 +5520,48 @@ async function handleClick(event) {
       return;
     }
 
+    if (action === "open-player-picker") {
+      const matchId = target.getAttribute("data-match-id");
+      const fieldName = target.getAttribute("data-field-name");
+      if (!matchId || !fieldName) {
+        return;
+      }
+
+      state.playerPicker = {
+        matchId,
+        fieldName,
+      };
+      render();
+      return;
+    }
+
+    if (action === "close-player-picker") {
+      state.playerPicker = null;
+      render();
+      return;
+    }
+
+    if (action === "select-player-option") {
+      const matchId = target.getAttribute("data-match-id");
+      const fieldName = target.getAttribute("data-field-name");
+      const playerName = target.getAttribute("data-player-name") || "";
+      setPredictionDraftField(matchId, fieldName, playerName);
+      state.playerPicker = null;
+      render();
+      maybeWarnPredictionConflict(document.getElementById("core-prediction-form"));
+      return;
+    }
+
+    if (action === "clear-player-option") {
+      const matchId = target.getAttribute("data-match-id");
+      const fieldName = target.getAttribute("data-field-name");
+      setPredictionDraftField(matchId, fieldName, "");
+      state.playerPicker = null;
+      render();
+      maybeWarnPredictionConflict(document.getElementById("core-prediction-form"));
+      return;
+    }
+
     if (action === "load-provider-fixtures") {
       await loadProviderFixtures();
       return;
@@ -5641,6 +5692,12 @@ function handleChange(event) {
 }
 
 function handleKeyDown(event) {
+  if (event.key === "Escape" && state.playerPicker) {
+    state.playerPicker = null;
+    render();
+    return;
+  }
+
   if (event.key === "Escape" && state.predictionScorecardMatchId) {
     state.predictionScorecardMatchId = null;
     render();
@@ -5650,6 +5707,11 @@ function handleKeyDown(event) {
 function handleInput(event) {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) {
+    return;
+  }
+
+  if (target.dataset.playerPickerSearch === "true") {
+    filterPlayerPickerOptions(target.value);
     return;
   }
 
@@ -7000,6 +7062,7 @@ function renderPlayerSelectOptions(placeholder, groups, selectedValue) {
 }
 
 function renderPredictionPlayerInput({
+  match,
   fieldId,
   fieldName,
   label,
@@ -7010,29 +7073,291 @@ function renderPredictionPlayerInput({
   helperText,
 }) {
   const totalPlayers = getSelectablePlayerCount(groups);
+  const hasValue = Boolean(selectedValue);
+  const selectedMeta = getPlayerMeta(match, selectedValue);
+  const sublabel = hasValue
+    ? [selectedMeta?.team ? getTeamShortCode(selectedMeta.team) : "", selectedMeta?.role || ""]
+        .filter(Boolean)
+        .join(" · ")
+    : `${totalPlayers} official options`;
 
   return `
     <div class="field prediction-player-field">
-      <label for="${escapeAttribute(fieldId)}">${escapeHtml(label)}</label>
+      <label for="${escapeAttribute(`${fieldId}-trigger`)}">${escapeHtml(label)}</label>
       <input
         id="${escapeAttribute(fieldId)}"
-        class="picker-input"
-        type="text"
+        type="hidden"
         name="${escapeAttribute(fieldName)}"
-        list="${escapeAttribute(`${fieldId}-list`)}"
-        autocomplete="off"
-        autocapitalize="words"
-        spellcheck="false"
-        placeholder="${escapeAttribute(placeholder)}"
         value="${escapeAttribute(selectedValue || "")}"
         ${disabled ? "disabled" : ""}
       />
-      <datalist id="${escapeAttribute(`${fieldId}-list`)}">
-        ${renderPlayerDatalistOptions(groups)}
-      </datalist>
+      <button
+        id="${escapeAttribute(`${fieldId}-trigger`)}"
+        class="player-picker-trigger ${hasValue ? "has-value" : ""}"
+        type="button"
+        data-action="open-player-picker"
+        data-match-id="${escapeAttribute(match?.id || "")}"
+        data-field-name="${escapeAttribute(fieldName)}"
+        ${disabled ? "disabled" : ""}
+      >
+        <span class="player-picker-trigger-main">
+          ${
+            hasValue
+              ? renderPlayerAvatar(match, selectedValue, {
+                  size: "sm",
+                  teamName: selectedMeta?.team || "",
+                })
+              : `<span class="player-picker-trigger-placeholder">${escapeHtml(label.slice(0, 1))}</span>`
+          }
+          <span class="player-picker-trigger-copy">
+            <strong>${escapeHtml(hasValue ? selectedValue : placeholder)}</strong>
+            <small>${escapeHtml(sublabel || helperText || `${totalPlayers} official options ready`)}</small>
+          </span>
+        </span>
+        <span class="player-picker-trigger-chevron" aria-hidden="true">▾</span>
+      </button>
       <span class="field-helper">${escapeHtml(helperText || `${totalPlayers} official options ready`)}</span>
     </div>
   `;
+}
+
+function getPlayerPickerMeta(fieldName) {
+  if (fieldName === "batsman_name") {
+    return {
+      label: "Batsman",
+      searchPlaceholder: "Search official batting options",
+      role: "batsman",
+    };
+  }
+
+  return {
+    label: "Bowler",
+    searchPlaceholder: "Search official bowling options",
+    role: "bowler",
+  };
+}
+
+function getPlayerPickerConfig() {
+  const picker = state.playerPicker;
+  if (!picker?.matchId || !picker?.fieldName) {
+    return null;
+  }
+
+  const match = state.matches.find((entry) => entry.id === picker.matchId);
+  if (!match) {
+    return null;
+  }
+
+  const meta = getPlayerPickerMeta(picker.fieldName);
+  const groups = getSelectablePlayers(match, meta.role);
+  return {
+    ...picker,
+    ...meta,
+    match,
+    groups,
+    totalPlayers: getSelectablePlayerCount(groups),
+    selectedValue: getEditablePrediction(match.id)?.[picker.fieldName] || "",
+  };
+}
+
+function renderPlayerPickerDialog() {
+  const picker = getPlayerPickerConfig();
+  if (!picker) {
+    return "";
+  }
+
+  const selectedMeta = getPlayerMeta(picker.match, picker.selectedValue);
+  const groupsMarkup = picker.groups
+    .map((group) => {
+      const options = group.players
+        .map((player) => {
+          const isSelected = playerNamesMatch(player.name, picker.selectedValue);
+          const searchText = cleanText(
+            `${player.name} ${group.teamName} ${getTeamShortCode(group.teamName)} ${player.role || ""}`,
+            240,
+          ).toLowerCase();
+          return `
+            <button
+              class="player-picker-option ${isSelected ? "selected" : ""}"
+              type="button"
+              data-action="select-player-option"
+              data-match-id="${escapeAttribute(picker.match.id)}"
+              data-field-name="${escapeAttribute(picker.fieldName)}"
+              data-player-name="${escapeAttribute(player.name)}"
+              data-player-option-search="${escapeAttribute(searchText)}"
+            >
+              ${renderPlayerAvatar(picker.match, player.name, { size: "sm", teamName: group.teamName })}
+              <span class="player-picker-option-copy">
+                <strong>${escapeHtml(cleanMatchPlayerName(player.name))}</strong>
+                <small>${escapeHtml(
+                  [getTeamShortCode(group.teamName), player.role || ""].filter(Boolean).join(" · "),
+                )}</small>
+              </span>
+              ${isSelected ? `<span class="player-picker-option-check">Selected</span>` : ""}
+            </button>
+          `;
+        })
+        .join("");
+
+      if (!options) {
+        return "";
+      }
+
+      return `
+        <section class="player-picker-group" data-player-group>
+          <div class="player-picker-group-title">
+            ${renderTeamMark(group.teamName, "xs")}
+            <span>${escapeHtml(group.teamName)}</span>
+          </div>
+          <div class="player-picker-group-options">
+            ${options}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="dialog-layer player-picker-layer">
+      <button class="dialog-backdrop" type="button" data-action="close-player-picker" aria-label="Close player picker"></button>
+      <section
+        class="dialog-card player-picker-dialog"
+        data-total-options="${escapeAttribute(String(picker.totalPlayers))}"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="player-picker-title"
+      >
+        <div class="dialog-head player-picker-head">
+          <div>
+            <span class="panel-kicker">${escapeHtml(picker.label)}</span>
+            <h3 id="player-picker-title">Choose ${escapeHtml(picker.label.toLowerCase())}</h3>
+            <p>${escapeHtml(`${picker.totalPlayers} official options across both teams.`)}</p>
+          </div>
+          <button class="dialog-close" type="button" data-action="close-player-picker" aria-label="Close player picker">×</button>
+        </div>
+        <div class="player-picker-toolbar">
+          <label class="player-picker-search">
+            <span class="sr-only">Search ${escapeHtml(picker.label.toLowerCase())}</span>
+            <input
+              id="player-picker-search"
+              type="text"
+              autocomplete="off"
+              autocapitalize="words"
+              spellcheck="false"
+              placeholder="${escapeAttribute(picker.searchPlaceholder)}"
+              data-player-picker-search="true"
+              autofocus
+            />
+          </label>
+          ${
+            picker.selectedValue
+              ? `
+                <button
+                  class="ghost-btn player-picker-clear"
+                  type="button"
+                  data-action="clear-player-option"
+                  data-match-id="${escapeAttribute(picker.match.id)}"
+                  data-field-name="${escapeAttribute(picker.fieldName)}"
+                >
+                  Clear
+                </button>
+              `
+              : ""
+          }
+        </div>
+        ${
+          picker.selectedValue
+            ? `
+              <div class="player-picker-selected-strip">
+                ${renderPlayerAvatar(picker.match, picker.selectedValue, { size: "sm", teamName: selectedMeta?.team || "" })}
+                <div>
+                  <strong>${escapeHtml(cleanMatchPlayerName(picker.selectedValue))}</strong>
+                  <small>${escapeHtml(
+                    [selectedMeta?.team ? getTeamShortCode(selectedMeta.team) : "", selectedMeta?.role || ""]
+                      .filter(Boolean)
+                      .join(" · ") || "Current pick",
+                  )}</small>
+                </div>
+              </div>
+            `
+            : ""
+        }
+        <div class="player-picker-results-head">
+          <span data-player-picker-count>${escapeHtml(`${picker.totalPlayers} official options`)}</span>
+        </div>
+        <div class="player-picker-list">
+          ${groupsMarkup}
+          <div class="empty-state player-picker-empty" data-player-picker-empty hidden>No matching players found. Try a shorter search.</div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function setPredictionDraftField(matchId, fieldName, value) {
+  if (!matchId || !fieldName) {
+    return;
+  }
+
+  const editablePrediction = getEditablePrediction(matchId) || {};
+  const nextValue = cleanNullableText(value, 80);
+  const draft = {
+    batsman_name: cleanNullableText(
+      fieldName === "batsman_name" ? nextValue : editablePrediction.batsman_name,
+      80,
+    ),
+    bowler_name: cleanNullableText(
+      fieldName === "bowler_name" ? nextValue : editablePrediction.bowler_name,
+      80,
+    ),
+    team_pick: cleanNullableText(editablePrediction.team_pick, 80),
+    predicted_score:
+      editablePrediction.predicted_score !== null &&
+      editablePrediction.predicted_score !== undefined &&
+      /^\d+$/.test(String(editablePrediction.predicted_score).trim())
+        ? Number.parseInt(String(editablePrediction.predicted_score).trim(), 10)
+        : null,
+  };
+
+  state.predictionDrafts[matchId] = draft;
+}
+
+function filterPlayerPickerOptions(query) {
+  const dialog = document.querySelector(".player-picker-dialog");
+  if (!(dialog instanceof HTMLElement)) {
+    return;
+  }
+
+  const normalizedQuery = cleanText(query, 120).toLowerCase();
+  let visibleCount = 0;
+
+  dialog.querySelectorAll("[data-player-group]").forEach((group) => {
+    let groupVisibleCount = 0;
+
+    group.querySelectorAll("[data-player-option-search]").forEach((option) => {
+      const searchText = String(option.getAttribute("data-player-option-search") || "");
+      const visible = !normalizedQuery || searchText.includes(normalizedQuery);
+      option.hidden = !visible;
+      if (visible) {
+        groupVisibleCount += 1;
+      }
+    });
+
+    group.hidden = groupVisibleCount === 0;
+    visibleCount += groupVisibleCount;
+  });
+
+  const countLabel = dialog.querySelector("[data-player-picker-count]");
+  if (countLabel) {
+    countLabel.textContent = normalizedQuery
+      ? `${visibleCount} matching players`
+      : `${dialog.getAttribute("data-total-options") || visibleCount} official options`;
+  }
+
+  const emptyState = dialog.querySelector("[data-player-picker-empty]");
+  if (emptyState instanceof HTMLElement) {
+    emptyState.hidden = visibleCount > 0;
+  }
 }
 
 function getMatchSyncSummary(match) {

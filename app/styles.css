@@ -687,6 +687,105 @@ button {
   position: relative;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.player-picker-trigger {
+  width: 100%;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.player-picker-trigger:hover {
+  border-color: rgba(255, 184, 77, 0.28);
+  transform: translateY(-1px);
+}
+
+.player-picker-trigger:focus-visible {
+  border-color: rgba(255, 184, 77, 0.45);
+  box-shadow: 0 0 0 4px rgba(255, 184, 77, 0.1);
+}
+
+.player-picker-trigger:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.player-picker-trigger.has-value {
+  background:
+    linear-gradient(180deg, rgba(114, 242, 201, 0.08), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.055);
+}
+
+.player-picker-trigger-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.player-picker-trigger-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.player-picker-trigger-copy strong,
+.player-picker-trigger-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-picker-trigger-copy strong {
+  font-size: 1rem;
+}
+
+.player-picker-trigger-copy small {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.player-picker-trigger-placeholder {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  color: var(--text-dim);
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.player-picker-trigger-chevron {
+  color: var(--text-muted);
+  font-size: 1.25rem;
+}
+
 .field-helper {
   color: var(--text-muted);
   font-size: 0.78rem;
@@ -1322,6 +1421,170 @@ button {
   font-family: var(--font-display);
   font-size: 2rem;
   line-height: 1;
+}
+
+.player-picker-layer {
+  z-index: 95;
+}
+
+.player-picker-dialog {
+  width: min(760px, calc(100vw - 36px));
+  max-height: min(84vh, 860px);
+  display: grid;
+  gap: 16px;
+}
+
+.player-picker-head {
+  padding-bottom: 0;
+}
+
+.player-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 28px;
+}
+
+.player-picker-search {
+  flex: 1 1 auto;
+}
+
+.player-picker-search input {
+  width: 100%;
+  min-height: 56px;
+  padding: 14px 18px;
+  border-radius: 18px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.player-picker-search input:focus {
+  border-color: rgba(255, 184, 77, 0.42);
+  box-shadow: 0 0 0 4px rgba(255, 184, 77, 0.08);
+}
+
+.player-picker-clear {
+  flex-shrink: 0;
+}
+
+.player-picker-selected-strip {
+  margin: 0 28px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(114, 242, 201, 0.16);
+  background: rgba(114, 242, 201, 0.06);
+}
+
+.player-picker-selected-strip > div {
+  display: grid;
+  gap: 4px;
+}
+
+.player-picker-selected-strip small {
+  color: var(--text-muted);
+}
+
+.player-picker-results-head {
+  padding: 0 28px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.player-picker-list {
+  display: grid;
+  gap: 16px;
+  padding: 0 28px 28px;
+  overflow: auto;
+}
+
+.player-picker-group {
+  display: grid;
+  gap: 12px;
+}
+
+.player-picker-group-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.player-picker-group-options {
+  display: grid;
+  gap: 10px;
+}
+
+.player-picker-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+    rgba(255, 255, 255, 0.025);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.player-picker-option:hover {
+  border-color: rgba(255, 184, 77, 0.26);
+  transform: translateY(-1px);
+}
+
+.player-picker-option.selected {
+  border-color: rgba(114, 242, 201, 0.24);
+  background:
+    radial-gradient(circle at top right, rgba(114, 242, 201, 0.1), transparent 30%),
+    linear-gradient(180deg, rgba(114, 242, 201, 0.06), rgba(255, 255, 255, 0.025)),
+    rgba(6, 16, 33, 0.78);
+}
+
+.player-picker-option-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 4px;
+}
+
+.player-picker-option-copy strong,
+.player-picker-option-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-picker-option-copy small {
+  color: var(--text-muted);
+}
+
+.player-picker-option-check {
+  flex-shrink: 0;
+  color: var(--gold);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.player-picker-empty {
+  min-height: 120px;
+  place-items: center;
 }
 
 .prediction-score-call strong,
@@ -3307,6 +3570,36 @@ body[data-theme="light"] .match-rail-item.active {
   .page-tabs {
     width: 100%;
     margin-top: 2px;
+  }
+
+  .player-picker-layer {
+    align-items: end;
+    padding: 0;
+  }
+
+  .player-picker-dialog {
+    width: 100%;
+    max-height: 88vh;
+    border-radius: 28px 28px 0 0;
+  }
+
+  .player-picker-toolbar {
+    padding: 0 20px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .player-picker-selected-strip,
+  .player-picker-results-head,
+  .player-picker-list {
+    margin-left: 0;
+    margin-right: 0;
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .player-picker-option {
+    padding: 14px;
   }
 
   .page-tab {
