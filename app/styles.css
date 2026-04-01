@@ -1525,6 +1525,12 @@ button {
   gap: 10px;
 }
 
+.player-picker-group[hidden],
+.player-picker-option[hidden],
+.player-picker-empty[hidden] {
+  display: none !important;
+}
+
 .player-picker-option {
   width: 100%;
   display: flex;
