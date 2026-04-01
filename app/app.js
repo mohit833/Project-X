@@ -2798,7 +2798,6 @@ function renderStandingsPage() {
       ${renderLeagueOverviewModule()}
       <div class="route-grid route-grid-standings">
         ${renderLeaderboardPanel("Season Table")}
-        ${renderMembersPanel("League Members")}
         ${renderScoringPanel()}
       </div>
     </section>
