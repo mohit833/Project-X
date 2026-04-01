@@ -2010,29 +2010,8 @@ function renderCurrentMatchPage() {
               ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
               : `<section class="panel"><div class="empty-state">No actionable fixture is pinned yet. Browse the full fixture list to pick the match you want.</div></section>`
           }
-          ${match ? renderCurrentMatchSupport(match) : ""}
         </div>
       </div>
-    </section>
-  `;
-}
-
-function renderCurrentMatchSupport(match) {
-  const entries = getPredictionsForMatch(match.id);
-  return `
-    <section class="panel prediction-board current-match-picks-panel">
-      <div class="section-head">
-        <div>
-          <span class="panel-kicker">Shared board</span>
-          <h4>Who picked whom</h4>
-          <p>Everyone can see the claimed batsman, bowler, winner, and score call here with player images when official squad data is available.</p>
-        </div>
-      </div>
-      ${
-        entries.length
-          ? `<div class="entry-list">${entries.map((entry) => renderPredictionRow(entry)).join("")}</div>`
-          : `<div class="empty-state">No one has posted picks for this fixture yet.</div>`
-      }
     </section>
   `;
 }
@@ -4174,9 +4153,9 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           <section class="panel prediction-board match-centre-panel panel-group-picks" id="picks-board-panel">
             <div class="section-head">
               <div>
-                <span class="panel-kicker">Locked by others</span>
-                <h4>Taken picks</h4>
-                <p>See claimed pairs and score calls without leaving the match centre.</p>
+                <span class="panel-kicker">Shared board</span>
+                <h4>Who picked whom</h4>
+                <p>Everyone can see the claimed batsman, bowler, winner, and score call here with player images when official squad data is available.</p>
               </div>
             </div>
             ${
