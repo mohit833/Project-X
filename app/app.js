@@ -4400,13 +4400,13 @@ function renderAdminTools(match) {
               <div class="admin-card">
                 <div class="section-head">
                   <div>
-                    <h4>Leaderboard adjustment</h4>
-                    <p>Edit a member's saved overall leaderboard points. You can either add a manual delta or set the exact total you want them to show.</p>
+                    <h4>Set leaderboard total</h4>
+                    <p>Choose the member, type the final total you want them to have, and save. The app handles the correction behind the scenes.</p>
                   </div>
                 </div>
                 <div class="chip-list">
                   <span class="chip"><strong>Scope</strong>League total</span>
-                  <span class="chip"><strong>Type</strong>Delta or exact total</span>
+                  <span class="chip"><strong>Action</strong>Set final score</span>
                   <span class="chip"><strong>Saved in DB</strong>Yes</span>
                 </div>
                 <form class="form-grid" id="leaderboard-adjustment-form">
@@ -4418,25 +4418,8 @@ function renderAdminTools(match) {
                       ${renderLeaderboardAdjustmentMemberOptions(defaultAdjustmentMember?.user_id || "")}
                     </select>
                   </div>
-                  <div class="field">
-                    <label for="leaderboard-adjustment-mode">Adjustment mode</label>
-                    <select id="leaderboard-adjustment-mode" name="adjustment_mode">
-                      <option value="delta">Add or deduct points</option>
-                      <option value="set_total">Set exact total</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="leaderboard-adjustment-points">Points delta</label>
-                    <input
-                      id="leaderboard-adjustment-points"
-                      type="text"
-                      name="points_delta"
-                      inputmode="numeric"
-                      placeholder="Use 6 or -10"
-                    />
-                  </div>
-                  <div class="field">
-                    <label for="leaderboard-adjustment-total">Exact total</label>
+                  <div class="field span-2">
+                    <label for="leaderboard-adjustment-total">New total score</label>
                     <input
                       id="leaderboard-adjustment-total"
                       type="text"
@@ -4445,7 +4428,7 @@ function renderAdminTools(match) {
                       placeholder="Use 156"
                     />
                   </div>
-                  <div class="field">
+                  <div class="field span-2">
                     <label for="leaderboard-adjustment-reason">Reason</label>
                     <input
                       id="leaderboard-adjustment-reason"
@@ -4457,11 +4440,11 @@ function renderAdminTools(match) {
                   </div>
                   <div class="field span-2">
                     <small>
-                      Add or deduct points saves a signed manual adjustment. Set exact total figures out the difference for you and saves that correction in the database.
+                      Example: if a member is on 150 and you type 156, the app saves the needed +6 correction automatically.
                     </small>
                   </div>
                   <div class="field span-2">
-                    <button class="btn" type="submit">Save leaderboard adjustment</button>
+                    <button class="btn" type="submit">Save new total</button>
                   </div>
                 </form>
               </div>
@@ -5113,8 +5096,6 @@ async function saveLeaderboardAdjustment(form) {
   const formData = new FormData(form);
   const leagueId = String(formData.get("league_id") || state.activeLeagueId || "").trim();
   const targetUserId = String(formData.get("target_user_id") || "").trim();
-  const adjustmentMode = String(formData.get("adjustment_mode") || "delta").trim();
-  const pointsDeltaRaw = String(formData.get("points_delta") || "").trim();
   const targetTotalRaw = String(formData.get("target_total") || "").trim();
   const reason = cleanNullableText(formData.get("reason"), 160);
   const member = state.members.find((entry) => entry.user_id === targetUserId) || null;
@@ -5127,56 +5108,17 @@ async function saveLeaderboardAdjustment(form) {
     throw new Error("Choose the member whose points you want to adjust.");
   }
 
-  if (adjustmentMode === "set_total") {
-    if (!/^-?\d+$/.test(targetTotalRaw)) {
-      throw new Error("Exact total must be a whole number like 156.");
-    }
-
-    const targetTotal = Number.parseInt(targetTotalRaw, 10);
-
-    await withPendingForm(form, "Saving adjustment...", async () => {
-      const { error } = await state.client.rpc("set_leaderboard_total", {
-        p_league_id: leagueId,
-        p_target_user_id: targetUserId,
-        p_target_total: targetTotal,
-        p_reason: reason,
-      });
-
-      if (error) {
-        if (error.code === "PGRST202") {
-          throw new Error(
-            "Supabase is missing the leaderboard adjustment functions. Run the manual point adjustments migration in SQL editor, then retry.",
-          );
-        }
-        throw error;
-      }
-
-      await loadLeagueBundle();
-    });
-
-    form.reset();
-    render();
-    flash(
-      `Set ${member?.display_name || "that member"} to ${targetTotal} total points.`,
-      "success",
-    );
-    return;
+  if (!/^-?\d+$/.test(targetTotalRaw)) {
+    throw new Error("New total score must be a whole number like 156.");
   }
 
-  if (!/^-?\d+$/.test(pointsDeltaRaw)) {
-    throw new Error("Points delta must be a whole number like 6 or -10.");
-  }
-
-  const pointsDelta = Number.parseInt(pointsDeltaRaw, 10);
-  if (!pointsDelta) {
-    throw new Error("Points delta cannot be zero.");
-  }
+  const targetTotal = Number.parseInt(targetTotalRaw, 10);
 
   await withPendingForm(form, "Saving adjustment...", async () => {
-    const { error } = await state.client.rpc("save_leaderboard_adjustment", {
+    const { error } = await state.client.rpc("set_leaderboard_total", {
       p_league_id: leagueId,
       p_target_user_id: targetUserId,
-      p_points_delta: pointsDelta,
+      p_target_total: targetTotal,
       p_reason: reason,
     });
 
@@ -5195,7 +5137,7 @@ async function saveLeaderboardAdjustment(form) {
   form.reset();
   render();
   flash(
-    `Saved ${pointsDelta > 0 ? "+" : ""}${pointsDelta} points for ${member?.display_name || "that member"}.`,
+    `Set ${member?.display_name || "that member"} to ${targetTotal} total points.`,
     "success",
   );
 }
