@@ -86,6 +86,8 @@ const TEAM_BRANDS = {
 const TEAM_BRAND_ALIASES = {
   "royal-challengers-bangalore": "royal-challengers-bengaluru",
 };
+const IPL_OFFICIAL_TEAM_SITE_ORIGIN = "https://www.iplt20.com";
+const IPL_OFFICIAL_PLAYER_IMAGE_BASE_URL = "https://scores.iplt20.com/ipl/playerimages/";
 
 const state = {
   appName: APP_CONFIG.APP_NAME || "IPL Prediction League",
@@ -6588,6 +6590,7 @@ function parseOfficialTeamSquadHtml(source) {
     const role = decodeHtmlEntities(
       block.match(/<span class="d-block w-100 text-center">\s*([^<]+?)\s*<\/span>/)?.[1] || "",
     );
+    const image = extractOfficialPlayerImageFromHtml(block);
     const normalizedName = normalizeName(name);
 
     if (!normalizedName || seen.has(normalizedName)) {
@@ -6598,10 +6601,51 @@ function parseOfficialTeamSquadHtml(source) {
     players.push({
       name: cleanText(name, 80),
       role: cleanNullableText(role, 40),
+      image: cleanNullableText(image, 500),
     });
   }
 
   return players;
+}
+
+function extractOfficialPlayerImageFromHtml(block) {
+  const source = String(block || "");
+  const fromSourceSet = decodeHtmlEntities(
+    source.match(/\bsrcset\s*=\s*"([^"]+)"/i)?.[1]?.split(",")?.[0]?.trim()?.split(/\s+/)?.[0] || "",
+  );
+  const raw =
+    decodeHtmlEntities(
+      source.match(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*"([^"]+)"/i)?.[1] ||
+        source.match(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*'([^']+)'/i)?.[1] ||
+        "",
+    ) || fromSourceSet;
+
+  return resolveOfficialPlayerImageUrl(raw);
+}
+
+function resolveOfficialPlayerImageUrl(value) {
+  const raw = cleanNullableText(value, 500);
+  if (!raw) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    return raw;
+  }
+
+  if (raw.startsWith("//")) {
+    return `https:${raw}`;
+  }
+
+  if (raw.startsWith("/")) {
+    return `${IPL_OFFICIAL_TEAM_SITE_ORIGIN}${raw}`;
+  }
+
+  if (/^[^/]+\.(?:png|jpe?g|webp|gif|avif)$/i.test(raw)) {
+    return `${IPL_OFFICIAL_PLAYER_IMAGE_BASE_URL}${raw}`;
+  }
+
+  return raw;
 }
 
 function decodeHtmlEntities(value) {
@@ -8471,16 +8515,18 @@ function normalizePlayerEntry(entry, fallbackTeam) {
       40,
     ),
     image: cleanNullableText(
-      entry?.image ||
-        entry?.img ||
-        entry?.photo ||
-        entry?.playerImage ||
-        entry?.player_image ||
-        entry?.playerImageName ||
-        entry?.PlayerImage ||
-        entry?.PlayerImageName ||
-        entry?.profileImage ||
-        entry?.Image,
+      resolveOfficialPlayerImageUrl(
+        entry?.image ||
+          entry?.img ||
+          entry?.photo ||
+          entry?.playerImage ||
+          entry?.player_image ||
+          entry?.playerImageName ||
+          entry?.PlayerImage ||
+          entry?.PlayerImageName ||
+          entry?.profileImage ||
+          entry?.Image,
+      ),
       500,
     ),
   };

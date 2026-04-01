@@ -2,6 +2,8 @@ const DEFAULT_COMPETITION_URL = "https://scores.iplt20.com/ipl/mc/competition.js
 const DEFAULT_FEED_BASE_URL =
   "https://scores.iplt20.com/ipl/feeds";
 const DEFAULT_TEAM_BASE_URL = "https://www.iplt20.com/teams";
+const DEFAULT_TEAM_SITE_ORIGIN = "https://www.iplt20.com";
+const DEFAULT_PLAYER_IMAGE_BASE_URL = "https://scores.iplt20.com/ipl/playerimages/";
 const ALLOWED_HOSTS = new Set([
   "scores.iplt20.com",
   "ipl-stats-sports-mechanic.s3.ap-south-1.amazonaws.com",
@@ -195,6 +197,7 @@ function parseOfficialTeamSquadHtml(source) {
     const role = decodeHtmlEntities(
       block.match(/<span class="d-block w-100 text-center">\s*([^<]+?)\s*<\/span>/)?.[1] || "",
     );
+    const image = extractOfficialPlayerImageFromHtml(block);
     const normalizedName = normalizePick(name);
 
     if (!normalizedName || seen.has(normalizedName)) {
@@ -205,10 +208,51 @@ function parseOfficialTeamSquadHtml(source) {
     players.push({
       name,
       role: role || null,
+      image: image || null,
     });
   }
 
   return players;
+}
+
+function extractOfficialPlayerImageFromHtml(block) {
+  const source = String(block || "");
+  const fromSourceSet = decodeHtmlEntities(
+    source.match(/\bsrcset\s*=\s*"([^"]+)"/i)?.[1]?.split(",")?.[0]?.trim()?.split(/\s+/)?.[0] || "",
+  );
+  const raw =
+    decodeHtmlEntities(
+      source.match(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*"([^"]+)"/i)?.[1] ||
+        source.match(/\b(?:data-src|data-lazy-src|data-image|src)\s*=\s*'([^']+)'/i)?.[1] ||
+        "",
+    ) || fromSourceSet;
+
+  return resolveOfficialPlayerImageUrl(raw);
+}
+
+function resolveOfficialPlayerImageUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    return raw;
+  }
+
+  if (raw.startsWith("//")) {
+    return `https:${raw}`;
+  }
+
+  if (raw.startsWith("/")) {
+    return `${DEFAULT_TEAM_SITE_ORIGIN}${raw}`;
+  }
+
+  if (/^[^/]+\.(?:png|jpe?g|webp|gif|avif)$/i.test(raw)) {
+    return `${DEFAULT_PLAYER_IMAGE_BASE_URL}${raw}`;
+  }
+
+  return raw;
 }
 
 function decodeHtmlEntities(value) {
