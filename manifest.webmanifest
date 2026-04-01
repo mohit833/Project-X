@@ -1,7 +1,7 @@
 {
-  "name": "IPL Prediction League",
-  "short_name": "IPL League",
-  "description": "Multiplayer IPL picks, score calls, and leaderboard for friends.",
+  "name": "Indian Prediction League",
+  "short_name": "Indian League",
+  "description": "Multiplayer Indian cricket picks, score calls, and leaderboard for friends.",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07111f",

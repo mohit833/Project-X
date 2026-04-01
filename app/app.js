@@ -89,7 +89,7 @@ const IPL_OFFICIAL_TEAM_SITE_ORIGIN = "https://www.iplt20.com";
 const IPL_OFFICIAL_PLAYER_IMAGE_BASE_URL = "https://scores.iplt20.com/ipl/playerimages/";
 
 const state = {
-  appName: APP_CONFIG.APP_NAME || "IPL Prediction League",
+  appName: APP_CONFIG.APP_NAME || "Indian Prediction League",
   demoMode:
     Boolean(APP_CONFIG.DEMO_MODE) ||
     !APP_CONFIG.SUPABASE_URL ||
@@ -1435,16 +1435,6 @@ function render() {
 
   root.innerHTML = `
     <div class="app-shell">
-      <div class="utility-strip">
-        <div class="page-shell utility-strip-inner">
-          <div class="utility-copy">
-            <span class="utility-label">${escapeHtml(getUtilityLabel())}</span>
-            <span class="utility-separator"></span>
-            <span>${escapeHtml(getUtilityMessage())}</span>
-          </div>
-        </div>
-      </div>
-
       <header class="site-header">
         <div class="page-shell site-header-inner">
           <div class="site-brand">

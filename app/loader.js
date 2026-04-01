@@ -12,7 +12,7 @@ loadPatchedApp().catch((error) => {
   appRoot.innerHTML = `
     <div style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#09172d;color:#f5f7fb;font-family:'Space Grotesk',sans-serif;">
       <div style="max-width:560px;padding:24px 28px;border:1px solid rgba(255,255,255,0.16);border-radius:20px;background:rgba(7,16,31,0.9);box-shadow:0 24px 80px rgba(0,0,0,0.45);">
-        <h1 style="margin:0 0 12px;font-size:1.5rem;">IPL Prediction League</h1>
+        <h1 style="margin:0 0 12px;font-size:1.5rem;">Indian Prediction League</h1>
         <p style="margin:0 0 8px;line-height:1.6;">The app could not finish loading right now.</p>
         <p style="margin:0;color:#9fb4d1;line-height:1.6;">Please refresh once more. If it still fails, ask the admin to redeploy the latest files.</p>
       </div>
