@@ -132,6 +132,7 @@ const state = {
   route: readRouteState(),
   theme: readStoredTheme(),
   selectedMatchId: null,
+  predictionScorecardMatchId: null,
   activeMatchCentrePanel: "prediction",
   fixtureFilters: {
     team: "all",
@@ -454,6 +455,7 @@ document.addEventListener("submit", handleSubmit);
 document.addEventListener("click", handleClick);
 document.addEventListener("change", handleChange);
 document.addEventListener("input", handleInput);
+document.addEventListener("keydown", handleKeyDown);
 document.addEventListener("visibilitychange", handleAutoSyncVisibilityChange);
 window.addEventListener("hashchange", handleHashChange);
 window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -917,6 +919,9 @@ async function loadLeagueBundle() {
       state.probingMatchIds.delete(matchId);
     }
   }
+  if (state.predictionScorecardMatchId && !validMatchIds.has(state.predictionScorecardMatchId)) {
+    state.predictionScorecardMatchId = null;
+  }
   state.leaderboard = buildLeaderboardFromMatches(
     state.members,
     state.predictions,
@@ -1048,6 +1053,7 @@ function navigateToRoute(route, { scrollToTop = true } = {}) {
   const nextHash = buildRouteHref(nextRoute);
 
   state.route = nextRoute;
+  state.predictionScorecardMatchId = null;
   if (nextRoute.matchId) {
     state.selectedMatchId = nextRoute.matchId;
   }
@@ -1066,6 +1072,7 @@ function navigateToRoute(route, { scrollToTop = true } = {}) {
 
 function handleHashChange() {
   state.route = readRouteState();
+  state.predictionScorecardMatchId = null;
   syncRouteSelection();
   render();
 }
@@ -1516,6 +1523,7 @@ function render() {
         ${renderRouteContent(route)}
       </main>
       ${renderMobilePrimaryNav(route)}
+      ${renderPredictionScorecardDialog()}
     </div>
   `;
 
@@ -2453,6 +2461,7 @@ function renderFixtureTimeline() {
 function renderFixtureTimelineCard(match) {
   const matchNumber = state.matches.findIndex((entry) => entry.id === match.id) + 1;
   const status = computeMatchStatus(match);
+  const hasPredictionScorecard = Boolean(getMatchResult(match));
 
   return `
     <article class="fixture-card fixture-card-${escapeAttribute(status)}">
@@ -2485,6 +2494,20 @@ function renderFixtureTimelineCard(match) {
         >
           Match Centre
         </button>
+        ${
+          hasPredictionScorecard
+            ? `
+              <button
+                class="ghost-btn fixture-scorecard-btn"
+                type="button"
+                data-action="open-prediction-scorecard"
+                data-match-id="${match.id}"
+              >
+                Scorecard
+              </button>
+            `
+            : ""
+        }
       </div>
     </article>
   `;
@@ -4197,6 +4220,199 @@ function renderPredictionRow(entry) {
   `;
 }
 
+function getPredictionScorecardMatch() {
+  if (!state.predictionScorecardMatchId) {
+    return null;
+  }
+
+  return state.matches.find((match) => match.id === state.predictionScorecardMatchId) || null;
+}
+
+function getMatchPredictionScoreRows(match) {
+  const result = getMatchResult(match);
+  if (!match || !result) {
+    return [];
+  }
+
+  const actualScore = Number(result.first_innings_total);
+  const matchPredictions = getPredictionsForMatch(match.id);
+  const scoreWinnerId = Number.isFinite(actualScore)
+    ? getScorePredictionWinnerId(matchPredictions, actualScore)
+    : null;
+
+  return state.members
+    .map((member) => {
+      const prediction = getMemberPrediction(match.id, member.user_id);
+      const batsmanPoints =
+        prediction && prediction.batsman_name
+          ? getPlayerStatValue(result.batsman_runs, prediction.batsman_name, match)
+          : 0;
+      const bowlerPoints =
+        prediction && prediction.bowler_name
+          ? getPlayerStatValue(result.bowler_wickets, prediction.bowler_name, match) * 20
+          : 0;
+      const teamPoints =
+        prediction && prediction.team_pick && result.winner_team === prediction.team_pick ? 50 : 0;
+      const scorePoints = prediction?.id && scoreWinnerId === prediction.id ? 10 : 0;
+      const totalPoints = batsmanPoints + bowlerPoints + teamPoints + scorePoints;
+
+      return {
+        member,
+        prediction,
+        batsmanPoints,
+        bowlerPoints,
+        teamPoints,
+        scorePoints,
+        totalPoints,
+        isCurrentUser: member.user_id === state.user?.id,
+      };
+    })
+    .sort((left, right) => {
+      if (right.totalPoints !== left.totalPoints) {
+        return right.totalPoints - left.totalPoints;
+      }
+
+      if (Boolean(right.prediction) !== Boolean(left.prediction)) {
+        return Number(Boolean(right.prediction)) - Number(Boolean(left.prediction));
+      }
+
+      return left.member.display_name.localeCompare(right.member.display_name);
+    });
+}
+
+function renderPredictionScorecardPick(label, content, extraClass = "") {
+  return `
+    <div class="prediction-scorecard-pick ${extraClass}">
+      <span class="subtle">${escapeHtml(label)}</span>
+      ${content}
+    </div>
+  `;
+}
+
+function renderPredictionScorecardDialog() {
+  const match = getPredictionScorecardMatch();
+  const result = getMatchResult(match);
+  if (!match || !result) {
+    return "";
+  }
+
+  const rows = getMatchPredictionScoreRows(match);
+  const entriesPosted = rows.filter((row) => row.prediction).length;
+
+  return `
+    <div class="dialog-layer" aria-hidden="false">
+      <div class="dialog-backdrop" data-action="close-prediction-scorecard"></div>
+      <section
+        class="dialog-card prediction-scorecard-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="prediction-scorecard-title"
+      >
+        <div class="dialog-head">
+          <div>
+            <span class="panel-kicker">Prediction scorecard</span>
+            <h3 id="prediction-scorecard-title">${escapeHtml(match.title || `${match.team_a} vs ${match.team_b}`)}</h3>
+            <p>Match-wise prediction points after settlement. This popup shows league member scores for this fixture only.</p>
+          </div>
+          <button
+            class="dialog-close"
+            type="button"
+            data-action="close-prediction-scorecard"
+            aria-label="Close prediction scorecard"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="chip-list prediction-scorecard-summary">
+          <span class="chip"><strong>Winner</strong>${escapeHtml(result.winner_team || "-")}</span>
+          <span class="chip"><strong>1st innings</strong>${escapeHtml(result.first_innings_total ?? "-")}</span>
+          <span class="chip"><strong>Entries</strong>${escapeHtml(entriesPosted)}</span>
+          <span class="chip"><strong>Venue</strong>${escapeHtml(match.venue || "Venue TBD")}</span>
+        </div>
+
+        <div class="prediction-scorecard-list">
+          ${rows
+            .map((row, index) => {
+              const ownerName = row.member.display_name || "Player";
+              const prediction = row.prediction;
+              const ownerAvatarUrl =
+                row.member.avatar_url ||
+                (row.isCurrentUser ? state.profile?.avatar_url || getUserAvatarUrl(state.user) : "");
+
+              const batsmanContent = prediction?.batsman_name
+                ? `
+                    ${renderPlayerAvatar(match, prediction.batsman_name, { size: "sm" })}
+                    <strong>${escapeHtml(prediction.batsman_name)}</strong>
+                  `
+                : `<strong class="subtle">No pick</strong>`;
+              const bowlerContent = prediction?.bowler_name
+                ? `
+                    ${renderPlayerAvatar(match, prediction.bowler_name, { size: "sm" })}
+                    <strong>${escapeHtml(prediction.bowler_name)}</strong>
+                  `
+                : `<strong class="subtle">No pick</strong>`;
+              const teamContent = prediction?.team_pick
+                ? `
+                    ${renderTeamMark(prediction.team_pick, "xs")}
+                    <strong>${escapeHtml(prediction.team_pick)}</strong>
+                  `
+                : `<strong class="subtle">No pick</strong>`;
+              const scoreContent =
+                prediction?.predicted_score !== null && prediction?.predicted_score !== undefined
+                  ? `<strong>${escapeHtml(prediction.predicted_score)}</strong>`
+                  : `<strong class="subtle">No score</strong>`;
+
+              return `
+                <article class="prediction-scorecard-row ${row.isCurrentUser ? "current-user" : ""}">
+                  <div class="prediction-scorecard-rank">${escapeHtml(index + 1)}</div>
+                  <div class="prediction-scorecard-member">
+                    ${renderMemberAvatar(ownerName, "sm", "", ownerAvatarUrl)}
+                    <div class="identity-copy">
+                      <div class="prediction-row-head">
+                        <strong>${escapeHtml(ownerName)}</strong>
+                        ${row.isCurrentUser ? `<span class="tag tag-member">You</span>` : ""}
+                      </div>
+                      <span class="subtle">${
+                        prediction
+                          ? escapeHtml(
+                              prediction.score_submitted_at
+                                ? `Score ${formatDate(prediction.score_submitted_at)}`
+                                : prediction.core_submitted_at
+                                  ? `Core ${formatDate(prediction.core_submitted_at)}`
+                                  : "Prediction saved",
+                            )
+                          : "No prediction submitted"
+                      }</span>
+                    </div>
+                  </div>
+                  <div class="prediction-scorecard-picks">
+                    ${renderPredictionScorecardPick("Batsman", batsmanContent, prediction?.batsman_name ? "" : "is-empty")}
+                    ${renderPredictionScorecardPick("Bowler", bowlerContent, prediction?.bowler_name ? "" : "is-empty")}
+                    ${renderPredictionScorecardPick("Winner", teamContent, prediction?.team_pick ? "" : "is-empty")}
+                    ${renderPredictionScorecardPick("Score", scoreContent, prediction?.predicted_score !== null && prediction?.predicted_score !== undefined ? "" : "is-empty")}
+                  </div>
+                  <div class="prediction-scorecard-breakdown">
+                    <span class="score-breakdown-pill"><strong>Bat</strong>${escapeHtml(row.batsmanPoints)}</span>
+                    <span class="score-breakdown-pill"><strong>Bowl</strong>${escapeHtml(row.bowlerPoints)}</span>
+                    <span class="score-breakdown-pill"><strong>Team</strong>${escapeHtml(row.teamPoints)}</span>
+                    <span class="score-breakdown-pill"><strong>Score</strong>${escapeHtml(row.scorePoints)}</span>
+                  </div>
+                  <div class="prediction-scorecard-total">
+                    <span>Total</span>
+                    <strong>${escapeHtml(row.totalPoints)}</strong>
+                    <small>pts</small>
+                  </div>
+                </article>
+              `;
+            })
+            .join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderAdminTools(match) {
   const selectedSummary = match ? getMatchSyncSummary(match) : null;
   const scheduleYear = getTargetSeasonYear();
@@ -5313,6 +5529,24 @@ async function handleClick(event) {
       return;
     }
 
+    if (action === "open-prediction-scorecard") {
+      const matchId = target.getAttribute("data-match-id");
+      const match = state.matches.find((item) => item.id === matchId);
+      if (!match || !getMatchResult(match)) {
+        throw new Error("Prediction scorecard is not available for this match yet.");
+      }
+
+      state.predictionScorecardMatchId = matchId;
+      render();
+      return;
+    }
+
+    if (action === "close-prediction-scorecard") {
+      state.predictionScorecardMatchId = null;
+      render();
+      return;
+    }
+
     if (action === "load-provider-fixtures") {
       await loadProviderFixtures();
       return;
@@ -5440,6 +5674,13 @@ function handleChange(event) {
 
   syncPredictionDraftFromForm(target.form);
   maybeWarnPredictionConflict(target.form);
+}
+
+function handleKeyDown(event) {
+  if (event.key === "Escape" && state.predictionScorecardMatchId) {
+    state.predictionScorecardMatchId = null;
+    render();
+  }
 }
 
 function handleInput(event) {
