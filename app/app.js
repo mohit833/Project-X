@@ -1609,11 +1609,17 @@ function isPrimaryNavItemActive(route, item) {
   return route.page === item.route.page;
 }
 
+function getMatchesRouteSection(section) {
+  return section === "fixtures" ? "fixtures" : "centre";
+}
+
 function getRouteMeta(route) {
   const selectedMatch = getSelectedMatch();
   const isAdmin = currentMembership()?.role === "admin";
   const routeKey =
-    route.page === "matches" ? `matches-${route.section || "fixtures"}` : route.page;
+    route.page === "matches"
+      ? `matches-${getMatchesRouteSection(route.section || "fixtures")}`
+      : route.page;
   const meta = {
     home: {
       kicker: "Home",
@@ -1640,12 +1646,6 @@ function getRouteMeta(route) {
         ? `${selectedMatch.title || `${selectedMatch.team_a} vs ${selectedMatch.team_b}`} · ${selectedMatch.venue || "Venue TBD"}`
         : "Open one match at a time for picks, live lock windows, squad checks, and result status.",
       breadcrumbs: ["Home", "Matches", "Match Centre"],
-    },
-    "matches-picks": {
-      kicker: "Matches",
-      title: "Picks Board",
-      description: "See who has already locked their pair, winning team, and exact score call for the selected match.",
-      breadcrumbs: ["Home", "Matches", "Picks Board"],
     },
     "matches-admin": {
       kicker: "Matches",
@@ -1693,11 +1693,11 @@ function renderBreadcrumbs(routeMeta) {
 }
 
 function renderMatchesSectionTabs(route) {
+  const activeSection = getMatchesRouteSection(route.section);
   const matchId = getSelectedMatch()?.id || route.matchId || "";
   const sections = [
     { key: "fixtures", label: "Fixtures" },
     { key: "centre", label: "Match Centre" },
-    { key: "picks", label: "Picks Board" },
   ];
 
   return `
@@ -1705,7 +1705,7 @@ function renderMatchesSectionTabs(route) {
       ${sections
         .map((section) => `
           <a
-            class="page-tab ${route.section === section.key ? "active" : ""}"
+            class="page-tab ${activeSection === section.key ? "active" : ""}"
             href="${buildRouteHref({ page: "matches", section: section.key, matchId })}"
           >
             ${escapeHtml(section.label)}
@@ -2310,7 +2310,7 @@ function renderMatchesPage(route) {
     );
   }
 
-  const section = route.section || "fixtures";
+  const section = getMatchesRouteSection(route.section || "fixtures");
   const match = getSelectedMatch();
   const prediction = getCurrentUserPrediction(match?.id);
   const isAdmin = currentMembership()?.role === "admin";
@@ -2334,26 +2334,19 @@ function renderMatchesPage(route) {
             ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
             : `<section class="panel"><div class="empty-state">Choose a match to open the match centre.</div></section>`
           : `
-            ${renderMatchSummaryStrip(match)}
-            ${
-              section === "picks"
-                ? renderPicksBoardPanel(match)
-                : `
-                  <section class="panel">
-                    <div class="section-head">
-                      <div>
-                        <h3>Admin tools moved</h3>
-                        <p>All admin-only actions now live under the Admin/Profile route so the match experience stays focused on picks, live state, and results.</p>
-                      </div>
-                    </div>
-                    <div class="split-line">
-                      <a class="btn" href="${buildRouteHref({ page: "account" })}">${isAdmin ? "Open Admin/Profile" : "Open Profile"}</a>
-                      <span class="subtle">${isAdmin ? "Sync, recovery, cancellation, and leaderboard edits now live there." : "Only admins can use that console."}</span>
-                    </div>
-                  </section>
-                `
-            }
-          `
+              <section class="panel">
+                <div class="section-head">
+                  <div>
+                    <h3>Admin tools moved</h3>
+                    <p>All admin-only actions now live under the Admin/Profile route so the match experience stays focused on fixtures and match centre.</p>
+                  </div>
+                </div>
+                <div class="split-line">
+                  <a class="btn" href="${buildRouteHref({ page: "account" })}">${isAdmin ? "Open Admin/Profile" : "Open Profile"}</a>
+                  <span class="subtle">${isAdmin ? "Sync, recovery, cancellation, and leaderboard edits now live there." : "Only admins can use that console."}</span>
+                </div>
+              </section>
+            `
       }
     </section>
   `;
