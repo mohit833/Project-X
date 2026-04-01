@@ -2276,6 +2276,23 @@ body[data-theme="light"] .hero {
   grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
 }
 
+.current-match-support-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 18px;
+}
+
+.current-match-admin-panel {
+  align-self: start;
+}
+
+.current-match-admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .route-overview-panel {
   overflow: hidden;
 }
@@ -2944,6 +2961,7 @@ body[data-theme="light"] .match-rail-item.active {
   .route-grid-standings,
   .route-grid-account,
   .current-route-grid,
+  .current-match-support-grid,
   .matches-route-grid,
   .match-command-hero,
   .match-command-layout,

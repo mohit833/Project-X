@@ -102,6 +102,7 @@ const state = {
   matches: [],
   members: [],
   predictions: [],
+  pointAdjustments: [],
   leaderboard: [],
   notice: null,
   loading: false,
@@ -662,10 +663,12 @@ function loadDemoState() {
   state.matches = demoMatches;
   state.members = DEMO_MEMBERS;
   state.predictions = DEMO_PREDICTIONS;
+  state.pointAdjustments = [];
   state.leaderboard = buildLeaderboardFromMatches(
     DEMO_MEMBERS,
     DEMO_PREDICTIONS,
     demoMatches,
+    state.pointAdjustments,
   );
   syncRouteSelection();
 }
@@ -767,6 +770,7 @@ async function loadMemberships() {
     state.matches = [];
     state.members = [];
     state.predictions = [];
+    state.pointAdjustments = [];
     state.leaderboard = [];
     state.providerFixtures = [];
     teardownRealtime();
@@ -795,7 +799,7 @@ async function loadLeagueBundle() {
 
   const leagueId = state.activeLeagueId;
 
-  const [matchesResult, membersResult, predictionsResult] =
+  const [matchesResult, membersResult, predictionsResult, adjustmentsResult] =
     await Promise.all([
       state.client
         .from("matches")
@@ -815,6 +819,11 @@ async function loadLeagueBundle() {
         )
         .eq("league_id", leagueId)
         .order("created_at", { ascending: true }),
+      state.client
+        .from("manual_point_adjustments")
+        .select("id, league_id, user_id, points_delta, reason, created_by, created_at")
+        .eq("league_id", leagueId)
+        .order("created_at", { ascending: true }),
     ]);
 
   if (matchesResult.error) {
@@ -829,9 +838,20 @@ async function loadLeagueBundle() {
     throw predictionsResult.error;
   }
 
+  const adjustmentSupportMissing =
+    adjustmentsResult.error &&
+    /manual_point_adjustments/i.test(
+      `${adjustmentsResult.error.message || ""} ${adjustmentsResult.error.details || ""}`,
+    );
+
+  if (adjustmentsResult.error && !adjustmentSupportMissing) {
+    throw adjustmentsResult.error;
+  }
+
   state.matches = (matchesResult.data || []).map((match) => normalizeMatchRecord(match));
   state.members = membersResult.data || [];
   state.predictions = predictionsResult.data || [];
+  state.pointAdjustments = adjustmentSupportMissing ? [] : adjustmentsResult.data || [];
   const validMatchIds = new Set(state.matches.map((match) => match.id));
   for (const matchId of Object.keys(state.matchStatusProbeTimes)) {
     if (!validMatchIds.has(matchId)) {
@@ -852,6 +872,7 @@ async function loadLeagueBundle() {
     state.members,
     state.predictions,
     state.matches,
+    state.pointAdjustments,
   );
   syncRouteSelection();
 
@@ -1321,6 +1342,7 @@ async function probeVisibleMatchState(match) {
       state.members,
       state.predictions,
       state.matches,
+      state.pointAdjustments,
     );
     render();
   } catch (error) {
@@ -1942,9 +1964,88 @@ function renderCurrentMatchPage() {
               ? renderMatchDetail(match, prediction, isAdmin, leagueEnded)
               : `<section class="panel"><div class="empty-state">No actionable fixture is pinned yet. Browse the full fixture list to pick the match you want.</div></section>`
           }
+          ${match ? renderCurrentMatchSupport(match, isAdmin, leagueEnded) : ""}
           ${isAdmin && match && !leagueEnded ? renderAdminTools(match) : ""}
         </div>
       </div>
+    </section>
+  `;
+}
+
+function renderCurrentMatchSupport(match, isAdmin, leagueEnded = false) {
+  const entries = getPredictionsForMatch(match.id);
+  const picksPanel = `
+    <section class="panel prediction-board current-match-picks-panel">
+      <div class="section-head">
+        <div>
+          <span class="panel-kicker">Shared board</span>
+          <h4>Who picked whom</h4>
+          <p>Everyone can see the claimed batsman, bowler, winner, and score call here with player images when official squad data is available.</p>
+        </div>
+      </div>
+      ${
+        entries.length
+          ? `<div class="entry-list">${entries.map((entry) => renderPredictionRow(entry)).join("")}</div>`
+          : `<div class="empty-state">No one has posted picks for this fixture yet.</div>`
+      }
+    </section>
+  `;
+
+  if (!isAdmin || leagueEnded) {
+    return picksPanel;
+  }
+
+  return `
+    <div class="current-match-support-grid">
+      ${picksPanel}
+      ${renderCurrentMatchAdminCancelPanel(match)}
+    </div>
+  `;
+}
+
+function renderCurrentMatchAdminCancelPanel(match) {
+  const status = computeMatchStatus(match);
+  const cancelling = state.cancellingMatchIds.has(match.id);
+  const isCancelled = status === "cancelled";
+
+  return `
+    <section class="panel admin-card current-match-admin-panel">
+      <div class="section-head">
+        <div>
+          <span class="panel-kicker">Admin action</span>
+          <h4>Cancel this fixture</h4>
+          <p>Use this only when rain or an official abandonment means the match should not count toward leaderboard scoring.</p>
+        </div>
+      </div>
+      <div class="chip-list">
+        <span class="chip"><strong>Status</strong>${escapeHtml(labelizeStatus(status))}</span>
+        <span class="chip"><strong>Effect</strong>No points count</span>
+        <span class="chip"><strong>Result row</strong>${isCancelled ? "Removed" : "Will be removed"}</span>
+      </div>
+      <div class="current-match-admin-actions">
+        <button
+          class="ghost-btn danger-btn"
+          type="button"
+          data-action="cancel-match"
+          data-match-id="${match.id}"
+          ${cancelling || isCancelled ? "disabled" : ""}
+        >
+          ${
+            isCancelled
+              ? "Match cancelled"
+              : cancelling
+                ? "Cancelling..."
+                : "Cancel match"
+          }
+        </button>
+      </div>
+      <p class="footnote">
+        ${
+          isCancelled
+            ? "This fixture is already cancelled. Any previously settled points from it no longer contribute to the leaderboard."
+            : "Once cancelled, settlement stops, the match result is cleared, and any points from this fixture disappear from total points."
+        }
+      </p>
     </section>
   `;
 }
@@ -4193,6 +4294,7 @@ function renderAdminTools(match) {
     : [];
   const recoveryBatsmanListId = match ? `admin-recovery-batsmen-${match.id}` : "";
   const recoveryBowlerListId = match ? `admin-recovery-bowlers-${match.id}` : "";
+  const defaultAdjustmentMember = state.leaderboard[0] || state.members[0] || null;
   const pollingIntervalMs = Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 90 * 1000;
   const pollingLabel =
     pollingIntervalMs >= 60 * 1000
@@ -4289,6 +4391,74 @@ function renderAdminTools(match) {
                     `
                     : `<div class="empty-state">No provider link yet. Sync the league schedule first, then this match will gain live data automatically.</div>`
                 }
+              </div>
+              <div class="admin-card">
+                <div class="section-head">
+                  <div>
+                    <h4>Leaderboard adjustment</h4>
+                    <p>Edit a member's saved overall leaderboard points. You can either add a manual delta or set the exact total you want them to show.</p>
+                  </div>
+                </div>
+                <div class="chip-list">
+                  <span class="chip"><strong>Scope</strong>League total</span>
+                  <span class="chip"><strong>Type</strong>Delta or exact total</span>
+                  <span class="chip"><strong>Saved in DB</strong>Yes</span>
+                </div>
+                <form class="form-grid" id="leaderboard-adjustment-form">
+                  <input type="hidden" name="league_id" value="${match.league_id}" />
+                  <div class="field span-2">
+                    <label for="leaderboard-adjustment-member">Member</label>
+                    <select id="leaderboard-adjustment-member" name="target_user_id">
+                      <option value="">Choose member</option>
+                      ${renderLeaderboardAdjustmentMemberOptions(defaultAdjustmentMember?.user_id || "")}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="leaderboard-adjustment-mode">Adjustment mode</label>
+                    <select id="leaderboard-adjustment-mode" name="adjustment_mode">
+                      <option value="delta">Add or deduct points</option>
+                      <option value="set_total">Set exact total</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="leaderboard-adjustment-points">Points delta</label>
+                    <input
+                      id="leaderboard-adjustment-points"
+                      type="text"
+                      name="points_delta"
+                      inputmode="numeric"
+                      placeholder="Use 6 or -10"
+                    />
+                  </div>
+                  <div class="field">
+                    <label for="leaderboard-adjustment-total">Exact total</label>
+                    <input
+                      id="leaderboard-adjustment-total"
+                      type="text"
+                      name="target_total"
+                      inputmode="numeric"
+                      placeholder="Use 156"
+                    />
+                  </div>
+                  <div class="field">
+                    <label for="leaderboard-adjustment-reason">Reason</label>
+                    <input
+                      id="leaderboard-adjustment-reason"
+                      type="text"
+                      name="reason"
+                      maxlength="160"
+                      placeholder="Rain correction, fair-play fix, manual bonus..."
+                    />
+                  </div>
+                  <div class="field span-2">
+                    <small>
+                      Add or deduct points saves a signed manual adjustment. Set exact total figures out the difference for you and saves that correction in the database.
+                    </small>
+                  </div>
+                  <div class="field span-2">
+                    <button class="btn" type="submit">Save leaderboard adjustment</button>
+                  </div>
+                </form>
               </div>
               <div class="admin-card">
                 <div class="section-head">
@@ -4475,26 +4645,6 @@ function renderAdminTools(match) {
                             Setting current ball lets you manually force the 3.1 and 7.1 over locks. Leave it blank to rely on provider sync and fallback deadlines.
                           </small>
                         </div>
-                        <div class="field span-2 admin-danger-zone">
-                          <small>
-                            Use cancellation only when the fixture is abandoned or officially called off. Cancelled matches never allocate points, and any existing points from that fixture are removed.
-                          </small>
-                          <button
-                            class="ghost-btn danger-btn"
-                            type="button"
-                            data-action="cancel-match"
-                            data-match-id="${match.id}"
-                            ${state.cancellingMatchIds.has(match.id) || selectedMatchStatus === "cancelled" ? "disabled" : ""}
-                          >
-                            ${
-                              selectedMatchStatus === "cancelled"
-                                ? "Match cancelled"
-                                : state.cancellingMatchIds.has(match.id)
-                                  ? "Cancelling..."
-                                  : "Cancel match"
-                            }
-                          </button>
-                        </div>
                         <div class="field span-2">
                           <button class="btn" type="submit">Save admin override</button>
                         </div>
@@ -4620,6 +4770,11 @@ async function handleSubmit(event) {
       return;
     }
 
+    if (form.id === "leaderboard-adjustment-form") {
+      await saveLeaderboardAdjustment(form);
+      return;
+    }
+
     if (form.id === "admin-override-form") {
       await saveAdminOverride(form);
     }
@@ -4672,6 +4827,7 @@ async function saveProfile(form) {
       state.members,
       state.predictions,
       state.matches,
+      state.pointAdjustments,
     );
     render();
     flash("Demo profile updated locally.", "success");
@@ -4903,6 +5059,97 @@ async function saveAdminRecovery(form) {
   render();
   flash(
     `Recovered prediction for ${member?.display_name || "that member"}.`,
+    "success",
+  );
+}
+
+async function saveLeaderboardAdjustment(form) {
+  const formData = new FormData(form);
+  const leagueId = String(formData.get("league_id") || state.activeLeagueId || "").trim();
+  const targetUserId = String(formData.get("target_user_id") || "").trim();
+  const adjustmentMode = String(formData.get("adjustment_mode") || "delta").trim();
+  const pointsDeltaRaw = String(formData.get("points_delta") || "").trim();
+  const targetTotalRaw = String(formData.get("target_total") || "").trim();
+  const reason = cleanNullableText(formData.get("reason"), 160);
+  const member = state.members.find((entry) => entry.user_id === targetUserId) || null;
+
+  if (!leagueId) {
+    throw new Error("League id is missing.");
+  }
+
+  if (!targetUserId) {
+    throw new Error("Choose the member whose points you want to adjust.");
+  }
+
+  if (adjustmentMode === "set_total") {
+    if (!/^-?\d+$/.test(targetTotalRaw)) {
+      throw new Error("Exact total must be a whole number like 156.");
+    }
+
+    const targetTotal = Number.parseInt(targetTotalRaw, 10);
+
+    await withPendingForm(form, "Saving adjustment...", async () => {
+      const { error } = await state.client.rpc("set_leaderboard_total", {
+        p_league_id: leagueId,
+        p_target_user_id: targetUserId,
+        p_target_total: targetTotal,
+        p_reason: reason,
+      });
+
+      if (error) {
+        if (error.code === "PGRST202") {
+          throw new Error(
+            "Supabase is missing the leaderboard adjustment functions. Run the manual point adjustments migration in SQL editor, then retry.",
+          );
+        }
+        throw error;
+      }
+
+      await loadLeagueBundle();
+    });
+
+    form.reset();
+    render();
+    flash(
+      `Set ${member?.display_name || "that member"} to ${targetTotal} total points.`,
+      "success",
+    );
+    return;
+  }
+
+  if (!/^-?\d+$/.test(pointsDeltaRaw)) {
+    throw new Error("Points delta must be a whole number like 6 or -10.");
+  }
+
+  const pointsDelta = Number.parseInt(pointsDeltaRaw, 10);
+  if (!pointsDelta) {
+    throw new Error("Points delta cannot be zero.");
+  }
+
+  await withPendingForm(form, "Saving adjustment...", async () => {
+    const { error } = await state.client.rpc("save_leaderboard_adjustment", {
+      p_league_id: leagueId,
+      p_target_user_id: targetUserId,
+      p_points_delta: pointsDelta,
+      p_reason: reason,
+    });
+
+    if (error) {
+      if (error.code === "PGRST202") {
+        throw new Error(
+          "Supabase is missing the leaderboard adjustment functions. Run the manual point adjustments migration in SQL editor, then retry.",
+        );
+      }
+      throw error;
+    }
+
+    await loadLeagueBundle();
+  });
+
+  form.reset();
+  render();
+  flash(
+    `Saved ${pointsDelta > 0 ? "+" : ""}${pointsDelta} points for ${member?.display_name || "that member"}.`,
     "success",
   );
 }
@@ -5760,6 +6007,30 @@ function renderAdminRecoveryMemberOptions(matchId, selectedUserId = "") {
     .join("");
 }
 
+function renderLeaderboardAdjustmentMemberOptions(selectedUserId = "") {
+  const totalsByUserId = new Map(
+    state.leaderboard.map((entry) => [String(entry.user_id || ""), Number(entry.total_points || 0)]),
+  );
+
+  return [...state.members]
+    .sort((left, right) => {
+      const leftTotal = totalsByUserId.get(String(left.user_id || "")) || 0;
+      const rightTotal = totalsByUserId.get(String(right.user_id || "")) || 0;
+      return rightTotal - leftTotal || String(left.display_name || "").localeCompare(String(right.display_name || ""));
+    })
+    .map((member) => {
+      const total = totalsByUserId.get(String(member.user_id || "")) || 0;
+      return `
+        <option value="${escapeAttribute(member.user_id)}" ${
+          String(member.user_id || "") === String(selectedUserId || "") ? "selected" : ""
+        }>
+          ${escapeHtml(member.display_name || "Player")} · ${escapeHtml(total)} pts
+        </option>
+      `;
+    })
+    .join("");
+}
+
 function renderPlayerDatalistOptions(groups) {
   const seen = new Set();
 
@@ -6020,6 +6291,11 @@ function renderLeaderboardRow(entry, index) {
               <span class="chip"><strong>Bowl</strong>${escapeHtml(entry.bowler_points ?? 0)}</span>
               <span class="chip"><strong>Team</strong>${escapeHtml(entry.team_points ?? 0)}</span>
               <span class="chip"><strong>Score</strong>${escapeHtml(entry.score_points ?? 0)}</span>
+              ${
+                entry.manual_points
+                  ? `<span class="chip"><strong>Manual</strong>${escapeHtml(entry.manual_points)}</span>`
+                  : ""
+              }
             </div>
           </div>
         </div>
@@ -6032,7 +6308,7 @@ function renderLeaderboardRow(entry, index) {
   `;
 }
 
-function buildLeaderboardFromMatches(members, predictions, matches) {
+function buildLeaderboardFromMatches(members, predictions, matches, pointAdjustments = []) {
   const rows = members.map((member) => ({
     league_id: member.league_id,
     user_id: member.user_id,
@@ -6043,6 +6319,7 @@ function buildLeaderboardFromMatches(members, predictions, matches) {
     bowler_points: 0,
     score_points: 0,
     team_points: 0,
+    manual_points: 0,
     total_points: 0,
   }));
 
@@ -6080,8 +6357,24 @@ function buildLeaderboardFromMatches(members, predictions, matches) {
       predictionsByMatchId.get(prediction.match_id) || [],
     );
     row.team_points += result.winner_team === prediction.team_pick ? 50 : 0;
+  }
+
+  for (const adjustment of pointAdjustments) {
+    const row = rowByUserId[adjustment.user_id];
+    if (!row) {
+      continue;
+    }
+
+    row.manual_points += Number(adjustment.points_delta || 0);
+  }
+
+  for (const row of rows) {
     row.total_points =
-      row.batsman_points + row.bowler_points + row.score_points + row.team_points;
+      row.batsman_points +
+      row.bowler_points +
+      row.score_points +
+      row.team_points +
+      row.manual_points;
   }
 
   return rows.sort(
