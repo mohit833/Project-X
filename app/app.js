@@ -2312,6 +2312,7 @@ function renderMatchesPage(route) {
   if (section === "fixtures") {
     return `
       <section class="route-stack">
+        ${renderTodayFixturesStrip()}
         ${renderFixtureFilters()}
         ${renderFixtureTimeline()}
       </section>
@@ -2416,6 +2417,35 @@ function renderFixtureFilters() {
   `;
 }
 
+function renderTodayFixturesStrip() {
+  const todayMatches = sortMatchesChronologically(state.matches).filter((match) => isTodayMatch(match));
+
+  if (!todayMatches.length) {
+    return "";
+  }
+
+  return `
+    <section class="panel fixture-spotlight">
+      <div class="section-head">
+        <div>
+          <span class="panel-kicker">Today first</span>
+          <h3>${escapeHtml(todayMatches.length === 1 ? "Today’s match" : "Today’s matches")}</h3>
+          <p>${escapeHtml(
+            todayMatches.length === 1
+              ? "Keep the live fixture closest to the filters so today’s action is always in front."
+              : "Today has more than one fixture, so both are pinned here before the full season timeline.",
+          )}</p>
+        </div>
+      </div>
+      <div class="fixture-timeline fixture-spotlight-grid">
+        ${todayMatches
+          .map((match) => renderFixtureTimelineCard(match, { extraClass: "fixture-card-today" }))
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 function getFilteredMatches() {
   return state.matches.filter((match) => {
     const teamMatch =
@@ -2444,13 +2474,14 @@ function renderFixtureTimeline() {
   `;
 }
 
-function renderFixtureTimelineCard(match) {
+function renderFixtureTimelineCard(match, { extraClass = "" } = {}) {
   const matchNumber = state.matches.findIndex((entry) => entry.id === match.id) + 1;
   const status = computeMatchStatus(match);
   const hasPredictionScorecard = Boolean(getMatchResult(match));
+  const classes = ["fixture-card", `fixture-card-${status}`, cleanText(extraClass, 80)].filter(Boolean).join(" ");
 
   return `
-    <article class="fixture-card fixture-card-${escapeAttribute(status)}">
+    <article class="${escapeAttribute(classes)}">
       <div class="fixture-card-date">
         <span class="fixture-badge">Match ${escapeHtml(matchNumber || "-")}</span>
         <strong>${escapeHtml(formatFixtureDayLabel(match.starts_at))}</strong>
