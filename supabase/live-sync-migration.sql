@@ -472,7 +472,7 @@ resolved_scores as (
     case
       when first_innings_total is null or predicted_score is null then 0
       when best_score_delta is null or best_score_tie_count <= 0 then 0
-      when score_delta = best_score_delta then 10 / best_score_tie_count
+      when score_delta = best_score_delta then (10 / best_score_tie_count)::integer
       else 0
     end as score_points,
     team_points
