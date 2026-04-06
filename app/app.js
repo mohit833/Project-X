@@ -138,7 +138,9 @@ const state = {
   activeMatchCentrePanel: "prediction",
   fixtureFilters: {
     team: "all",
-    venue: "all",
+    status: "scheduled",
+    todayOnly: false,
+    scorecardOnly: false,
   },
   installPromptEvent: null,
   isStandalone:
@@ -2371,43 +2373,68 @@ function renderFixtureFilters() {
   const teamOptions = Array.from(
     new Set(state.matches.flatMap((match) => [match.team_a, match.team_b]).filter(Boolean)),
   ).sort((left, right) => left.localeCompare(right));
-  const venueOptions = Array.from(
-    new Set(state.matches.map((match) => match.venue).filter(Boolean)),
-  ).sort((left, right) => left.localeCompare(right));
+  const statusOptions = [
+    { value: "scheduled", label: "Scheduled" },
+    { value: "live", label: "Live" },
+    { value: "completed", label: "Completed" },
+    { value: "cancelled", label: "Cancelled" },
+    { value: "all", label: "All statuses" },
+  ];
 
   return `
     <section class="fixture-toolbar">
-      <div class="fixture-filter-group">
-        <label class="fixture-filter">
-          <span>Team</span>
-          <select id="fixture-team-filter">
-            <option value="all">All teams</option>
-            ${teamOptions
-              .map(
-                (team) => `
-                  <option value="${escapeAttribute(team)}" ${
-                    state.fixtureFilters.team === team ? "selected" : ""
-                  }>${escapeHtml(team)}</option>
-                `,
-              )
-              .join("")}
-          </select>
-        </label>
-        <label class="fixture-filter">
-          <span>Venue</span>
-          <select id="fixture-venue-filter">
-            <option value="all">All venues</option>
-            ${venueOptions
-              .map(
-                (venue) => `
-                  <option value="${escapeAttribute(venue)}" ${
-                    state.fixtureFilters.venue === venue ? "selected" : ""
-                  }>${escapeHtml(venue)}</option>
-                `,
-              )
-              .join("")}
-          </select>
-        </label>
+      <div class="fixture-toolbar-main">
+        <div class="fixture-filter-group">
+          <label class="fixture-filter">
+            <span>Team</span>
+            <select id="fixture-team-filter">
+              <option value="all">All teams</option>
+              ${teamOptions
+                .map(
+                  (team) => `
+                    <option value="${escapeAttribute(team)}" ${
+                      state.fixtureFilters.team === team ? "selected" : ""
+                    }>${escapeHtml(team)}</option>
+                  `,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label class="fixture-filter">
+            <span>Status</span>
+            <select id="fixture-status-filter">
+              ${statusOptions
+                .map(
+                  (statusOption) => `
+                    <option value="${escapeAttribute(statusOption.value)}" ${
+                      state.fixtureFilters.status === statusOption.value ? "selected" : ""
+                    }>${escapeHtml(statusOption.label)}</option>
+                  `,
+                )
+                .join("")}
+            </select>
+          </label>
+        </div>
+        <div class="fixture-quick-filters" aria-label="Fixture quick filters">
+          <button
+            class="fixture-filter-chip ${state.fixtureFilters.todayOnly ? "is-active" : ""}"
+            type="button"
+            data-action="toggle-fixture-filter-flag"
+            data-flag="todayOnly"
+            aria-pressed="${state.fixtureFilters.todayOnly ? "true" : "false"}"
+          >
+            Today only
+          </button>
+          <button
+            class="fixture-filter-chip ${state.fixtureFilters.scorecardOnly ? "is-active" : ""}"
+            type="button"
+            data-action="toggle-fixture-filter-flag"
+            data-flag="scorecardOnly"
+            aria-pressed="${state.fixtureFilters.scorecardOnly ? "true" : "false"}"
+          >
+            Has scorecard
+          </button>
+        </div>
       </div>
       <div class="fixture-toolbar-actions">
         <button class="ghost-btn" type="button" data-action="clear-fixture-filters">Reset filters</button>
@@ -2448,14 +2475,31 @@ function renderTodayFixturesStrip() {
 
 function getFilteredMatches() {
   return state.matches.filter((match) => {
+    const computedStatus = computeFixtureFilterStatus(match);
+    const hasPredictionScorecard = Boolean(getMatchResult(match));
     const teamMatch =
       state.fixtureFilters.team === "all" ||
       match.team_a === state.fixtureFilters.team ||
       match.team_b === state.fixtureFilters.team;
-    const venueMatch =
-      state.fixtureFilters.venue === "all" || match.venue === state.fixtureFilters.venue;
-    return teamMatch && venueMatch;
+    const statusMatch =
+      state.fixtureFilters.status === "all" || computedStatus === state.fixtureFilters.status;
+    const todayMatch = !state.fixtureFilters.todayOnly || isTodayMatch(match);
+    const scorecardMatch = !state.fixtureFilters.scorecardOnly || hasPredictionScorecard;
+    return teamMatch && statusMatch && todayMatch && scorecardMatch;
   });
+}
+
+function computeFixtureFilterStatus(match) {
+  const status = computeMatchStatus(match);
+  if (status === "completed" || status === "cancelled") {
+    return status;
+  }
+
+  if (["live", "locked", "finalizing"].includes(status)) {
+    return "live";
+  }
+
+  return "scheduled";
 }
 
 function renderFixtureTimeline() {
@@ -5654,9 +5698,20 @@ async function handleClick(event) {
     if (action === "clear-fixture-filters") {
       state.fixtureFilters = {
         team: "all",
-        venue: "all",
+        status: "scheduled",
+        todayOnly: false,
+        scorecardOnly: false,
       };
       render();
+      return;
+    }
+
+    if (action === "toggle-fixture-filter-flag") {
+      const flag = target.getAttribute("data-flag");
+      if (flag === "todayOnly" || flag === "scorecardOnly") {
+        state.fixtureFilters[flag] = !state.fixtureFilters[flag];
+        render();
+      }
       return;
     }
 
@@ -5723,8 +5778,8 @@ function handleChange(event) {
     return;
   }
 
-  if (target instanceof HTMLSelectElement && target.id === "fixture-venue-filter") {
-    state.fixtureFilters.venue = target.value || "all";
+  if (target instanceof HTMLSelectElement && target.id === "fixture-status-filter") {
+    state.fixtureFilters.status = target.value || "scheduled";
     render();
     return;
   }
