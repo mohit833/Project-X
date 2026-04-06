@@ -1365,26 +1365,26 @@ with scored_predictions as (
       when mr.first_innings_total is not null and p.predicted_score is not null
         then abs(mr.first_innings_total - p.predicted_score)
       else null
-    end as score_delta,
-    row_number() over (
-      partition by p.match_id
-      order by
-        case
-          when mr.first_innings_total is not null and p.predicted_score = mr.first_innings_total then 0
-          else 1
-        end,
-        case
-          when mr.first_innings_total is not null and p.predicted_score is not null
-            then abs(mr.first_innings_total - p.predicted_score)
-          else 2147483647
-        end,
-        coalesce(p.score_submitted_at, p.created_at, 'infinity'::timestamptz),
-        coalesce(p.created_at, 'infinity'::timestamptz),
-        p.id
-    ) as score_rank
+    end as score_delta
   from public.predictions p
   left join public.match_results mr
     on mr.match_id = p.match_id
+),
+best_scores as (
+  select
+    scored_predictions.*,
+    min(score_delta) filter (where score_delta is not null) over (partition by match_id) as best_score_delta
+  from scored_predictions
+),
+resolved_score_ties as (
+  select
+    best_scores.*,
+    count(*) filter (
+      where score_delta is not null
+        and best_score_delta is not null
+        and score_delta = best_score_delta
+    ) over (partition by match_id) as best_score_tie_count
+  from best_scores
 ),
 resolved_scores as (
   select
@@ -1397,11 +1397,12 @@ resolved_scores as (
     bowler_points,
     case
       when first_innings_total is null or predicted_score is null then 0
-      when score_rank = 1 then 10
+      when best_score_delta is null or best_score_tie_count <= 0 then 0
+      when score_delta = best_score_delta then 10 / best_score_tie_count
       else 0
     end as score_points,
     team_points
-  from scored_predictions
+  from resolved_score_ties
 )
 select
   prediction_id,

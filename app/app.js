@@ -4046,7 +4046,7 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                       </div>
                       <div class="field span-2">
                         <small>
-                          Exact score prediction opens after 3.1 overs and locks at 7.1 overs. If nobody is exact, the single nearest score wins.
+                          Exact score prediction opens after 3.1 overs and locks at 7.1 overs. If nobody is exact, the nearest score wins, and tied nearest picks split the 10 points.
                         </small>
                       </div>
                       <div class="field span-2">
@@ -6885,56 +6885,46 @@ function calculateScorePointsForPrediction(prediction, result, matchPredictions)
     return 0;
   }
 
-  return getScorePredictionWinnerId(matchPredictions, actualScore) === prediction?.id ? 10 : 0;
+  const winningPredictionIds = getScorePredictionWinnerIds(matchPredictions, actualScore);
+  if (!winningPredictionIds.length || !prediction?.id || !winningPredictionIds.includes(prediction.id)) {
+    return 0;
+  }
+
+  return Math.floor(10 / winningPredictionIds.length);
 }
 
-function getScorePredictionWinnerId(matchPredictions, actualScore) {
+function getScorePredictionWinnerIds(matchPredictions, actualScore) {
   const validPredictions = asArray(matchPredictions)
     .map((entry) => ({
       id: entry?.id || null,
-      predictedScore: Number(entry?.predicted_score),
+      predictedScore:
+        entry?.predicted_score === null ||
+        entry?.predicted_score === undefined ||
+        String(entry.predicted_score).trim() === "" ||
+        !/^\d+$/.test(String(entry.predicted_score).trim())
+          ? null
+          : Number.parseInt(String(entry.predicted_score).trim(), 10),
       scoreSubmittedAt: entry?.score_submitted_at ? new Date(entry.score_submitted_at).getTime() : null,
       createdAt: entry?.created_at ? new Date(entry.created_at).getTime() : null,
     }))
     .filter((entry) => entry.id && Number.isFinite(entry.predictedScore));
 
   if (!validPredictions.length) {
-    return null;
+    return [];
   }
 
-  validPredictions.sort((left, right) => {
-    const leftExactRank = left.predictedScore === actualScore ? 0 : 1;
-    const rightExactRank = right.predictedScore === actualScore ? 0 : 1;
-    if (leftExactRank !== rightExactRank) {
-      return leftExactRank - rightExactRank;
-    }
+  const exactPredictions = validPredictions.filter((entry) => entry.predictedScore === actualScore);
+  if (exactPredictions.length) {
+    return exactPredictions.map((entry) => entry.id);
+  }
 
-    const deltaDiff =
-      Math.abs(left.predictedScore - actualScore) - Math.abs(right.predictedScore - actualScore);
-    if (deltaDiff !== 0) {
-      return deltaDiff;
-    }
+  const bestDelta = Math.min(
+    ...validPredictions.map((entry) => Math.abs(entry.predictedScore - actualScore)),
+  );
 
-    const leftSubmitted = Number.isFinite(left.scoreSubmittedAt)
-      ? left.scoreSubmittedAt
-      : Number.POSITIVE_INFINITY;
-    const rightSubmitted = Number.isFinite(right.scoreSubmittedAt)
-      ? right.scoreSubmittedAt
-      : Number.POSITIVE_INFINITY;
-    if (leftSubmitted !== rightSubmitted) {
-      return leftSubmitted - rightSubmitted;
-    }
-
-    const leftCreated = Number.isFinite(left.createdAt) ? left.createdAt : Number.POSITIVE_INFINITY;
-    const rightCreated = Number.isFinite(right.createdAt) ? right.createdAt : Number.POSITIVE_INFINITY;
-    if (leftCreated !== rightCreated) {
-      return leftCreated - rightCreated;
-    }
-
-    return String(left.id).localeCompare(String(right.id));
-  });
-
-  return validPredictions[0]?.id || null;
+  return validPredictions
+    .filter((entry) => Math.abs(entry.predictedScore - actualScore) === bestDelta)
+    .map((entry) => entry.id);
 }
 
 function getLiveWindowState(match, prediction) {
