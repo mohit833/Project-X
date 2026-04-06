@@ -34,13 +34,8 @@ async function syncActiveMatches({
     supabaseServiceRoleKey,
     Math.max(Number(limit) * 3 || 120, 60),
   );
-  const settledMatchIds = await fetchSettledMatchIds(
-    supabaseUrl,
-    supabaseServiceRoleKey,
-    rawMatches.map((match) => match.id),
-  );
   const matches = rawMatches
-    .filter((match) => shouldAutoSyncMatch(match) && !settledMatchIds.has(match.id))
+    .filter((match) => shouldAutoSyncMatch(match))
     .slice(0, Math.max(Number(limit) || 40, 1));
 
   const report = {
@@ -61,6 +56,11 @@ async function syncActiveMatches({
         match,
         snapshot,
       );
+      const persistedStatus = computePersistedProviderStatus(
+        snapshot,
+        match,
+        Boolean(settlement),
+      );
       const partialSettlementMessage =
         !settlement && snapshot?.status === "completed"
           ? "Official result is complete but point extraction is waiting for the full scorecard."
@@ -71,16 +71,26 @@ async function syncActiveMatches({
         supabaseServiceRoleKey,
         match.id,
         buildMatchUpdatePayload(match, snapshot, {
-          persistedStatus: computePersistedProviderStatus(
-            snapshot,
-            match,
-            Boolean(settlement),
-          ),
+          persistedStatus,
           syncError: partialSettlementMessage,
         }),
       );
 
       report.synced += 1;
+
+      if (persistedStatus === "cancelled") {
+        await deleteMatchResult(
+          supabaseUrl,
+          supabaseServiceRoleKey,
+          match.id,
+        );
+        report.details.push({
+          match_id: match.id,
+          title: match.title,
+          status: "cancelled",
+        });
+        continue;
+      }
 
       if (settlement) {
         await upsertMatchResult(
@@ -136,21 +146,6 @@ async function fetchTrackedMatches(supabaseUrl, supabaseServiceRoleKey, limit) {
   return asArray(rows);
 }
 
-async function fetchSettledMatchIds(supabaseUrl, supabaseServiceRoleKey, matchIds) {
-  if (!matchIds.length) {
-    return new Set();
-  }
-
-  const rows = await supabaseRequest(supabaseUrl, supabaseServiceRoleKey, "match_results", {
-    params: {
-      select: "match_id",
-      match_id: `in.(${matchIds.join(",")})`,
-    },
-  });
-
-  return new Set(asArray(rows).map((row) => cleanNullableText(row?.match_id, 80)).filter(Boolean));
-}
-
 async function updateMatch(supabaseUrl, supabaseServiceRoleKey, matchId, payload) {
   const body = Object.fromEntries(
     Object.entries(payload || {}).filter(([, value]) => value !== undefined),
@@ -201,19 +196,39 @@ async function upsertMatchResult(
   });
 }
 
+async function deleteMatchResult(supabaseUrl, supabaseServiceRoleKey, matchId) {
+  await supabaseRequest(supabaseUrl, supabaseServiceRoleKey, "match_results", {
+    method: "DELETE",
+    params: {
+      match_id: `eq.${matchId}`,
+    },
+    headers: {
+      Prefer: "return=minimal",
+    },
+  });
+}
+
 function buildMatchUpdatePayload(
   match,
   snapshot,
   { persistedStatus, syncError = null } = {},
 ) {
   const nowIso = new Date().toISOString();
+  const nextStatus =
+    cleanNullableText(persistedStatus, 20) ||
+    cleanNullableText(snapshot?.status, 20) ||
+    match?.status ||
+    "scheduled";
+  const isCancelled = nextStatus === "cancelled";
   const currentBall =
-    snapshot?.current_innings_ball ?? match?.current_innings_ball ?? null;
+    isCancelled ? null : snapshot?.current_innings_ball ?? match?.current_innings_ball ?? null;
   const overDisplay =
-    cleanNullableText(snapshot?.current_over_display, 20) ||
-    (currentBall !== null ? formatBallsAsOvers(currentBall) : null) ||
-    match?.current_over_display ||
-    null;
+    isCancelled
+      ? null
+      : cleanNullableText(snapshot?.current_over_display, 20) ||
+        (currentBall !== null ? formatBallsAsOvers(currentBall) : null) ||
+        match?.current_over_display ||
+        null;
 
   return {
     title: cleanText(snapshot?.title || match?.title, 120),
@@ -223,15 +238,12 @@ function buildMatchUpdatePayload(
     provider: cleanNullableText(snapshot?.provider, 40) || match?.provider || "ipl-official",
     series_name:
       cleanNullableText(snapshot?.series_name, 120) || match?.series_name || null,
-    status:
-      cleanNullableText(persistedStatus, 20) ||
-      cleanNullableText(snapshot?.status, 20) ||
-      match?.status ||
-      "scheduled",
+    status: nextStatus,
     current_innings_ball: currentBall,
     current_over_display: overDisplay,
+    auto_sync_enabled: isCancelled ? false : match?.auto_sync_enabled ?? true,
     last_synced_at: nowIso,
-    sync_error: syncError,
+    sync_error: isCancelled ? null : syncError,
   };
 }
 

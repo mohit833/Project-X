@@ -7619,7 +7619,8 @@ async function cancelMatch(matchId) {
       throw error;
     }
 
-    await loadLeagueBundle();
+    applyCancelledMatchLocally(matchId);
+    scheduleLeagueReload();
     flash("Match cancelled. This fixture no longer contributes any points.", "success");
   } finally {
     state.cancellingMatchIds.delete(matchId);
@@ -7675,6 +7676,44 @@ async function syncMatchFromProvider(
   try {
     const latestSnapshot = await fetchProviderMatchSnapshot(match.external_match_id, match);
     const enrichedSnapshot = await enrichFixtureWithPlayingXi(latestSnapshot, match);
+    const providerStatus = computeProviderMatchStatus(enrichedSnapshot);
+
+    if (providerStatus === "cancelled") {
+      const providerCancelNote = cleanNullableText(
+        [
+          cleanNullableText(match.notes, 600),
+          "Official IPL provider marked this fixture cancelled or abandoned.",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        600,
+      );
+
+      const { error } = await state.client.rpc("cancel_match", {
+        p_match_id: match.id,
+        p_notes: providerCancelNote,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      applyCancelledMatchLocally(match.id, providerCancelNote);
+
+      if (!skipReload) {
+        scheduleLeagueReload();
+      }
+
+      if (flashSuccess) {
+        flash(
+          "Official IPL feed marked this fixture cancelled. Its points were removed automatically.",
+          "info",
+        );
+      }
+
+      return;
+    }
+
     let settlementPreview = null;
     if (!getMatchResult(match) && computeProviderMatchStatus(enrichedSnapshot) === "completed") {
       try {
@@ -7722,6 +7761,44 @@ async function syncMatchFromProvider(
   } finally {
     markMatchSyncing(match.id, false, background);
   }
+}
+
+function applyCancelledMatchLocally(matchId, notes = null) {
+  let changed = false;
+
+  state.matches = state.matches.map((match) => {
+    if (match.id !== matchId) {
+      return match;
+    }
+
+    changed = true;
+    return normalizeMatchRecord({
+      ...match,
+      status: "cancelled",
+      auto_sync_enabled: false,
+      current_innings_ball: null,
+      current_over_display: null,
+      sync_error: null,
+      notes: notes ?? match.notes ?? null,
+      match_results: null,
+    });
+  });
+
+  if (!changed) {
+    return;
+  }
+
+  if (state.predictionScorecardMatchId === matchId) {
+    state.predictionScorecardMatchId = null;
+  }
+
+  state.leaderboard = buildLeaderboardFromMatches(
+    state.members,
+    state.predictions,
+    state.matches,
+    state.pointAdjustments,
+  );
+  syncRouteSelection();
 }
 
 function markMatchSyncing(matchId, isSyncing, background) {
