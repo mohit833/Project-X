@@ -3634,7 +3634,8 @@ body[data-theme="light"] .match-rail-item.active {
   }
 
   .route-main {
-    padding-bottom: 120px;
+    padding-bottom: calc(176px + env(safe-area-inset-bottom));
+    scroll-padding-bottom: calc(176px + env(safe-area-inset-bottom));
   }
 
   .page-masthead-copy h2 {
@@ -3850,7 +3851,7 @@ body[data-theme="light"] .match-rail-item.active {
     position: fixed;
     left: 10px;
     right: 10px;
-    bottom: calc(10px + env(safe-area-inset-bottom));
+    bottom: max(10px, env(safe-area-inset-bottom));
     z-index: 30;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
