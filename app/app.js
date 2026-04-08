@@ -3090,22 +3090,14 @@ function renderLeaderSpotlightCard(entry) {
 function renderLeaderSpotlightGraphic(displayName, avatarUrl = "") {
   return `
     <div class="leader-spotlight-showcase" aria-hidden="true">
-      <div class="leader-spotlight-halo"></div>
-      <div class="leader-spotlight-orbit leader-spotlight-orbit-a"></div>
-      <div class="leader-spotlight-orbit leader-spotlight-orbit-b"></div>
-      <svg class="leader-spotlight-laurels" viewBox="0 0 320 220" role="presentation" focusable="false">
-        <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="7">
-          <path d="M86 154c-24-18-36-46-34-80 20 5 33 12 46 28-14-20-18-42-14-67 24 11 37 25 45 49-6-28-2-52 14-75 18 19 26 42 24 69" />
-          <path d="M234 154c24-18 36-46 34-80-20 5-33 12-46 28 14-20 18-42 14-67-24 11-37 25-45 49 6-28 2-52-14-75-18 19-26 42-24 69" />
-        </g>
-      </svg>
+      <div class="leader-spotlight-glow leader-spotlight-glow-a"></div>
+      <div class="leader-spotlight-glow leader-spotlight-glow-b"></div>
+      <div class="leader-spotlight-ring leader-spotlight-ring-outer"></div>
+      <div class="leader-spotlight-ring leader-spotlight-ring-inner"></div>
       <div class="leader-spotlight-crest">
         ${renderMemberAvatar(displayName, "lg", "leader-spotlight-avatar", avatarUrl)}
       </div>
-      <div class="leader-spotlight-podium">
-        <span>Top of table</span>
-        <strong>Season pace-setter</strong>
-      </div>
+      <div class="leader-spotlight-chip">Top of table</div>
     </div>
   `;
 }
