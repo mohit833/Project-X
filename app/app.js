@@ -134,6 +134,7 @@ const state = {
   theme: readStoredTheme(),
   selectedMatchId: null,
   predictionScorecardMatchId: null,
+  memberProfileUserId: null,
   playerPicker: null,
   activeMatchCentrePanel: "prediction",
   fixtureFilters: {
@@ -1518,6 +1519,7 @@ function render() {
       </main>
       ${renderMobilePrimaryNav(route)}
       ${renderPredictionScorecardDialog()}
+      ${renderMemberProfileDialog()}
       ${renderPlayerPickerDialog()}
     </div>
   `;
@@ -3018,11 +3020,8 @@ function renderLeaderSpotlightPanel(title = "Top of the Table") {
 
   return `
     <section class="panel leader-spotlight-panel">
-      <div class="section-head">
-        <div>
-          <h3>${escapeHtml(title)}</h3>
-          <p>Season leader right now.</p>
-        </div>
+      <div class="leader-spotlight-header">
+        <span class="leader-spotlight-header-chip">${escapeHtml(title)}</span>
       </div>
       ${
         leader
@@ -3048,40 +3047,40 @@ function renderLeaderSpotlightCard(entry) {
     <article class="leader-spotlight-card ${sameUser ? "current-user" : ""}">
       <div class="leader-spotlight-aura" aria-hidden="true"></div>
       <div class="leader-spotlight-main">
-        <div class="leader-spotlight-rank">#1</div>
-        <div class="leader-spotlight-body">
-          ${renderLeaderSpotlightGraphic(displayName, avatarUrl)}
-          <div class="leader-spotlight-copy">
+        ${renderLeaderSpotlightGraphic(displayName, avatarUrl)}
+        <div class="leader-spotlight-copy">
+          <div class="leader-spotlight-title-row">
+            <span class="leader-spotlight-rank">#1</span>
             <span class="panel-kicker">Season leader</span>
-            <strong>${escapeHtml(displayName)}</strong>
-            <div class="leader-spotlight-meta">
-              <span class="subtle">${escapeHtml(entry.matches_joined || 0)} matches joined</span>
-              <span class="subtle">${escapeHtml(entry.role || "member")}</span>
-              ${sameUser ? `<span class="chip"><strong>You</strong>On top</span>` : ""}
+          </div>
+          <strong>${escapeHtml(displayName)}</strong>
+          <div class="leader-spotlight-meta">
+            <span class="subtle">${escapeHtml(entry.matches_joined || 0)} matches joined</span>
+            <span class="subtle">${escapeHtml(entry.role || "member")}</span>
+            ${sameUser ? `<span class="chip"><strong>You</strong>On top</span>` : ""}
+          </div>
+          <div class="leader-spotlight-inline-stats">
+            <div class="leader-inline-stat">
+              <span>Pts</span>
+              <strong>${escapeHtml(entry.total_points ?? 0)}</strong>
             </div>
+            ${
+              pointsLead !== null
+                ? `
+                  <div class="leader-inline-stat">
+                    <span>Lead</span>
+                    <strong>+${escapeHtml(pointsLead)}</strong>
+                  </div>
+                `
+                : `
+                  <div class="leader-inline-stat">
+                    <span>Status</span>
+                    <strong>Pace-setter</strong>
+                  </div>
+                `
+            }
           </div>
         </div>
-      </div>
-      <div class="leader-spotlight-stats">
-        <div class="leader-spotlight-score">
-          <span>Total points</span>
-          <strong>${escapeHtml(entry.total_points ?? 0)}</strong>
-        </div>
-        ${
-          pointsLead !== null
-            ? `
-              <div class="leader-spotlight-edge">
-                <span>Lead</span>
-                <strong>+${escapeHtml(pointsLead)}</strong>
-              </div>
-            `
-            : `
-              <div class="leader-spotlight-edge">
-                <span>Status</span>
-                <strong>Sets the pace</strong>
-              </div>
-            `
-        }
       </div>
     </article>
   `;
@@ -3097,41 +3096,162 @@ function renderLeaderSpotlightGraphic(displayName, avatarUrl = "") {
       <div class="leader-spotlight-crest">
         ${renderMemberAvatar(displayName, "lg", "leader-spotlight-avatar", avatarUrl)}
       </div>
-      <div class="leader-spotlight-chip">Top of table</div>
     </div>
   `;
 }
 
 function renderMembersPanel(title = "Players") {
+  const squadMembers = [...state.members]
+    .sort((left, right) => {
+      if (left.role === right.role) {
+        return left.display_name.localeCompare(right.display_name);
+      }
+      if (left.role === "admin") {
+        return -1;
+      }
+      if (right.role === "admin") {
+        return 1;
+      }
+      return 0;
+    })
+    .slice(0, 18);
+
   return `
-    <section class="panel">
+    <section class="panel member-cloud-panel">
       <div class="section-head">
         <div>
           <h3>${escapeHtml(title)}</h3>
-          <p>Everyone active in the current league.</p>
+          <p>Tap a member to open their league card.</p>
         </div>
       </div>
       ${
-        state.members.length
-          ? `<div class="member-list">${state.members
+        squadMembers.length
+          ? `<div class="member-cloud" role="list">${squadMembers
               .map(
-                (member) => `
-                  <div class="member-item">
-                    <div class="identity-stack">
-                      ${renderMemberAvatar(member.display_name, "sm", "", member.avatar_url || "")}
-                      <div class="identity-copy">
-                        <strong>${escapeHtml(member.display_name)}</strong>
-                        <span class="subtle">Joined ${escapeHtml(formatDate(member.joined_at, "date"))}</span>
-                      </div>
-                    </div>
-                    <span class="tag ${member.role === "admin" ? "tag-admin" : "tag-member"}">${escapeHtml(member.role)}</span>
-                  </div>
+                (member, index) => `
+                  <button
+                    class="member-orb member-orb-${(index % 6) + 1} ${member.role === "admin" ? "is-admin" : ""} ${member.user_id === state.user?.id ? "is-current-user" : ""}"
+                    type="button"
+                    data-action="open-member-profile"
+                    data-user-id="${escapeAttribute(member.user_id || "")}"
+                    data-display-name="${escapeAttribute(member.display_name || "Player")}"
+                    title="${escapeAttribute(member.display_name || "Player")}"
+                    role="listitem"
+                  >
+                    ${renderMemberAvatar(member.display_name, "md", "member-orb-avatar", member.avatar_url || "")}
+                    <span class="member-orb-name">${escapeHtml(member.display_name || "Player")}</span>
+                    ${
+                      member.role === "admin"
+                        ? `<span class="member-orb-role">admin</span>`
+                        : member.user_id === state.user?.id
+                          ? `<span class="member-orb-role">you</span>`
+                          : ""
+                    }
+                  </button>
                 `,
               )
               .join("")}</div>`
           : `<div class="empty-state">No members are active in this league yet.</div>`
       }
     </section>
+  `;
+}
+
+function getSelectedMemberProfile() {
+  if (!state.memberProfileUserId) {
+    return null;
+  }
+
+  const member = getMemberRecord(state.memberProfileUserId);
+  if (!member) {
+    return null;
+  }
+
+  const leaderboardEntry = state.leaderboard.find((entry) => entry.user_id === member.user_id) || null;
+  const rank =
+    leaderboardEntry ? state.leaderboard.findIndex((entry) => entry.user_id === member.user_id) + 1 : null;
+
+  return {
+    member,
+    leaderboardEntry,
+    rank: rank || null,
+  };
+}
+
+function renderMemberProfileDialog() {
+  const selected = getSelectedMemberProfile();
+  if (!selected) {
+    return "";
+  }
+
+  const { member, leaderboardEntry, rank } = selected;
+  const avatarUrl =
+    member.avatar_url ||
+    (member.user_id === state.user?.id ? state.profile?.avatar_url || getUserAvatarUrl(state.user) : "");
+
+  return `
+    <div class="dialog-layer" aria-hidden="false">
+      <div class="dialog-backdrop" data-action="close-member-profile"></div>
+      <section
+        class="dialog-card member-profile-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="member-profile-title"
+      >
+        <div class="dialog-head">
+          <div>
+            <span class="panel-kicker">League member</span>
+            <h3 id="member-profile-title">${escapeHtml(member.display_name || "Player")}</h3>
+            <p>${escapeHtml(member.role === "admin" ? "League admin and active member." : "Active squad member in this league.")}</p>
+          </div>
+          <button
+            class="dialog-close"
+            type="button"
+            data-action="close-member-profile"
+            aria-label="Close member details"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="member-profile-dialog-grid">
+          <div class="member-profile-hero">
+            <div class="member-profile-halo" aria-hidden="true"></div>
+            ${renderMemberAvatar(member.display_name, "lg", "member-profile-avatar", avatarUrl)}
+            <div class="member-profile-copy">
+              <strong>${escapeHtml(member.display_name || "Player")}</strong>
+              <span class="subtle">${escapeHtml(member.user_id === state.user?.id ? "You are in this squad" : "League member")}</span>
+            </div>
+          </div>
+          <div class="member-profile-stats">
+            <div class="member-profile-stat">
+              <span>Rank</span>
+              <strong>${escapeHtml(rank ? `#${rank}` : "-")}</strong>
+            </div>
+            <div class="member-profile-stat">
+              <span>Total points</span>
+              <strong>${escapeHtml(leaderboardEntry?.total_points ?? 0)}</strong>
+            </div>
+            <div class="member-profile-stat">
+              <span>Matches joined</span>
+              <strong>${escapeHtml(leaderboardEntry?.matches_joined ?? 0)}</strong>
+            </div>
+            <div class="member-profile-stat">
+              <span>Joined</span>
+              <strong>${escapeHtml(formatDate(member.joined_at, "date"))}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="chip-list member-profile-chips">
+          <span class="chip"><strong>Role</strong>${escapeHtml(member.role || "member")}</span>
+          <span class="chip"><strong>Batsman pts</strong>${escapeHtml(leaderboardEntry?.batsman_points ?? 0)}</span>
+          <span class="chip"><strong>Bowler pts</strong>${escapeHtml(leaderboardEntry?.bowler_points ?? 0)}</span>
+          <span class="chip"><strong>Team pts</strong>${escapeHtml(leaderboardEntry?.team_points ?? 0)}</span>
+          <span class="chip"><strong>Score pts</strong>${escapeHtml(leaderboardEntry?.score_points ?? 0)}</span>
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -5699,6 +5819,18 @@ async function handleClick(event) {
       return;
     }
 
+    if (action === "open-member-profile") {
+      state.memberProfileUserId = target.getAttribute("data-user-id") || null;
+      render();
+      return;
+    }
+
+    if (action === "close-member-profile") {
+      state.memberProfileUserId = null;
+      render();
+      return;
+    }
+
     if (action === "import-provider-fixture") {
       await importProviderFixture(target.getAttribute("data-external-match-id"));
       return;
@@ -5837,6 +5969,12 @@ function handleChange(event) {
 function handleKeyDown(event) {
   if (event.key === "Escape" && state.playerPicker) {
     state.playerPicker = null;
+    render();
+    return;
+  }
+
+  if (event.key === "Escape" && state.memberProfileUserId) {
+    state.memberProfileUserId = null;
     render();
     return;
   }
