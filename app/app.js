@@ -1565,18 +1565,21 @@ function renderMobilePrimaryNav(route) {
   const items = getPrimaryNavItems();
 
   return `
-    <nav class="mobile-dock" aria-label="Primary">
-      ${items
-        .map((item) => {
-          const active = isPrimaryNavItemActive(route, item);
-          return `
-            <a class="mobile-dock-link ${active ? "active" : ""}" href="${buildRouteHref(item.route)}">
-              <span>${escapeHtml(item.shortLabel || item.label)}</span>
-            </a>
-          `;
-        })
-        .join("")}
-    </nav>
+    <div class="mobile-dock-shell">
+      <div class="mobile-dock-spacer" aria-hidden="true"></div>
+      <nav class="mobile-dock" aria-label="Primary">
+        ${items
+          .map((item) => {
+            const active = isPrimaryNavItemActive(route, item);
+            return `
+              <a class="mobile-dock-link ${active ? "active" : ""}" href="${buildRouteHref(item.route)}">
+                <span>${escapeHtml(item.shortLabel || item.label)}</span>
+              </a>
+            `;
+          })
+          .join("")}
+      </nav>
+    </div>
   `;
 }
 

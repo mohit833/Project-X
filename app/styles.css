@@ -2511,6 +2511,11 @@ body[data-theme="light"] .hero {
   display: none;
 }
 
+.mobile-dock-shell,
+.mobile-dock-spacer {
+  display: none;
+}
+
 .site-actions {
   display: flex;
   align-items: center;
@@ -3634,8 +3639,8 @@ body[data-theme="light"] .match-rail-item.active {
   }
 
   .route-main {
-    padding-bottom: calc(176px + env(safe-area-inset-bottom));
-    scroll-padding-bottom: calc(176px + env(safe-area-inset-bottom));
+    padding-bottom: 32px;
+    scroll-padding-bottom: calc(132px + env(safe-area-inset-bottom));
   }
 
   .page-masthead-copy h2 {
@@ -3845,6 +3850,15 @@ body[data-theme="light"] .match-rail-item.active {
 
   .match-rail-horizontal {
     grid-auto-columns: minmax(230px, 84vw);
+  }
+
+  .mobile-dock-shell,
+  .mobile-dock-spacer {
+    display: block;
+  }
+
+  .mobile-dock-spacer {
+    height: calc(132px + env(safe-area-inset-bottom));
   }
 
   .mobile-dock {
