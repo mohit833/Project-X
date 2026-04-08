@@ -1860,14 +1860,9 @@ function renderHomePage() {
       ${
         state.activeLeagueId
           ? `
-            <div class="route-grid route-grid-home">
-              <div class="route-stack">
-                ${renderCompactFixturePanel()}
-              </div>
-              <div class="route-stack">
-                ${renderLeaderboardPanel("Top of the Table")}
-                ${renderMembersPanel("League Squad")}
-              </div>
+            <div class="route-stack">
+              ${renderLeaderboardPanel("Top of the Table")}
+              ${renderMembersPanel("League Squad")}
             </div>
           `
           : `
@@ -1964,7 +1959,14 @@ function renderBroadcastHero() {
   const focusStatus = focusMatch ? labelizeStatus(computeMatchStatus(focusMatch)) : "Waiting";
   const focusTitle = focusMatch?.title || "Sync the league and the season card lands here";
   const focusVenue = focusMatch?.venue || "Venue to be confirmed";
-  const fixtureHref = buildRouteHref(focusMatch ? { page: "current" } : { page: "matches", section: "fixtures" });
+  const currentMatchHref = buildRouteHref(
+    focusMatch ? { page: "current" } : { page: "matches", section: "fixtures" },
+  );
+  const fixturesHref = buildRouteHref({
+    page: "matches",
+    section: "fixtures",
+    matchId: focusMatch?.id || getSelectedMatch()?.id || null,
+  });
   const isAdmin = currentMembership()?.role === "admin";
   const leagueEnded = league?.status === "archived";
 
@@ -1974,7 +1976,8 @@ function renderBroadcastHero() {
         <span class="panel-kicker">${league ? "IPL League Live" : "Prediction League"}</span>
         <h2>${escapeHtml(league?.season || "IPL 2026")}</h2>
         <div class="hero-actions">
-          <a class="btn" href="${fixtureHref}">${focusMatch ? "Current match" : "Browse fixtures"}</a>
+          <a class="btn" href="${currentMatchHref}">${focusMatch ? "Current match" : "Browse fixtures"}</a>
+          <a class="ghost-btn" href="${fixturesHref}">View all fixtures</a>
           <a class="ghost-btn" href="${buildRouteHref({ page: "account" })}">
             ${isAdmin ? "League controls" : "Open profile"}
           </a>
