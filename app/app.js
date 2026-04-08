@@ -1854,42 +1854,9 @@ function renderHero() {
 }
 
 function renderHomePage() {
-  const actionMatch = getCurrentActionMatch();
-  const isAdmin = currentMembership()?.role === "admin";
-
   return `
     <section class="route-stack">
       ${renderBroadcastHero()}
-      <section class="spotlight-link-grid">
-        ${renderQuickLinkCard(
-          { page: "current" },
-          actionMatch ? "Today first" : "Match radar",
-          "Current Match",
-          actionMatch
-            ? "Jump straight into the one fixture that still needs attention instead of scanning the whole schedule."
-            : "The app will pin the next relevant fixture here as soon as your league has synced matches.",
-        )}
-        ${renderQuickLinkCard(
-          { page: "matches", section: "fixtures", matchId: actionMatch?.id || getSelectedMatch()?.id },
-          "Season slate",
-          "Fixtures",
-          "Follow the full season in a cleaner fixture wall and open any match centre from there.",
-        )}
-        ${renderQuickLinkCard(
-          { page: "standings" },
-          "Season race",
-          "Leaderboard",
-          "Keep the table, leader, and scoring story on their own cleaner interactive route.",
-        )}
-        ${renderQuickLinkCard(
-          { page: "account" },
-          isAdmin ? "Run the room" : "Your account",
-          isAdmin ? "Admin" : "Profile",
-          isAdmin
-            ? "Keep your profile close to the recovery, sync, and season-control actions without leaving the main shell."
-            : "Sign in, switch leagues, and keep your matchday identity clean in one place.",
-        )}
-      </section>
       ${
         state.activeLeagueId
           ? `
@@ -1990,17 +1957,6 @@ function renderCurrentMatchPage() {
   `;
 }
 
-function renderQuickLinkCard(route, eyebrow, title, description) {
-  return `
-    <a class="panel quick-link-card feature-link" href="${buildRouteHref(route)}">
-      <span class="panel-kicker">${escapeHtml(eyebrow)}</span>
-      <h3>${escapeHtml(title)}</h3>
-      <p>${escapeHtml(description)}</p>
-      <span class="quick-link-arrow">Open page</span>
-    </a>
-  `;
-}
-
 function renderBroadcastHero() {
   const league = getActiveLeague();
   const focusMatch = getCurrentActionMatch();
@@ -2056,20 +2012,6 @@ function renderBroadcastHero() {
             `
             : ""
         }
-        <div class="broadcast-meta-grid">
-          <div class="broadcast-stat">
-            <span>League</span>
-            <strong>${escapeHtml(league?.name || "No league joined")}</strong>
-          </div>
-          <div class="broadcast-stat">
-            <span>Fixtures</span>
-            <strong>${escapeHtml(state.matches.length || 0)}</strong>
-          </div>
-          <div class="broadcast-stat">
-            <span>Leader</span>
-            <strong>${escapeHtml(leader?.display_name || "Waiting")}</strong>
-          </div>
-        </div>
       </div>
       <div class="broadcast-scoreboard">
         <div class="broadcast-scoreboard-head">
