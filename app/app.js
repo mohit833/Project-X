@@ -1893,9 +1893,8 @@ function renderHomePage() {
       ${
         state.activeLeagueId
           ? `
-            <div class="league-hub-grid">
+            <div class="route-grid route-grid-home">
               <div class="route-stack">
-                ${renderLeagueStudioPanel()}
                 ${renderCompactFixturePanel()}
               </div>
               <div class="route-stack">
@@ -2011,6 +2010,7 @@ function renderBroadcastHero() {
   const focusVenue = focusMatch?.venue || "Venue to be confirmed";
   const fixtureHref = buildRouteHref(focusMatch ? { page: "current" } : { page: "matches", section: "fixtures" });
   const isAdmin = currentMembership()?.role === "admin";
+  const leagueEnded = league?.status === "archived";
 
   return `
     <section class="broadcast-hero">
@@ -2027,6 +2027,38 @@ function renderBroadcastHero() {
             ${isAdmin ? "Open admin" : "Open profile"}
           </a>
         </div>
+        ${
+          league
+            ? `
+              <div class="broadcast-control-row">
+                ${
+                  leagueEnded
+                    ? `<span class="chip broadcast-control-chip"><strong>Season</strong>Ended</span>`
+                    : `
+                      <span class="chip broadcast-control-chip"><strong>Invite</strong>${escapeHtml(league.invite_code || "-")}</span>
+                      <button
+                        class="ghost-btn hero-icon-btn"
+                        type="button"
+                        data-action="copy-invite-code"
+                        data-invite-code="${escapeAttribute(league.invite_code || "")}"
+                        aria-label="Copy invite code"
+                        title="Copy invite code"
+                      >
+                        <span aria-hidden="true">⧉</span>
+                      </button>
+                    `
+                }
+                ${
+                  isAdmin && !leagueEnded
+                    ? `<button class="ghost-btn danger-btn" type="button" data-action="end-league" data-league-id="${league.id}" ${
+                        state.endingLeagueId === league.id ? "disabled" : ""
+                      }>${state.endingLeagueId === league.id ? "Ending..." : "End season"}</button>`
+                    : ""
+                }
+              </div>
+            `
+            : ""
+        }
         <div class="broadcast-meta-grid">
           <div class="broadcast-stat">
             <span>League</span>

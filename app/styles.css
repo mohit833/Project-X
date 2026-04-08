@@ -3978,6 +3978,28 @@ body[data-theme="light"] .match-rail-item.active {
   line-height: 1.72;
 }
 
+.broadcast-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.broadcast-control-chip {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.hero-icon-btn {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 16px;
+  font-size: 1.12rem;
+  flex: 0 0 auto;
+}
+
 .broadcast-meta-grid,
 .league-command-stats,
 .league-context-grid,
@@ -4229,6 +4251,10 @@ body[data-theme="light"] .league-command-stage {
   .broadcast-hero {
     padding: 22px 18px;
     border-radius: 28px;
+  }
+
+  .broadcast-control-row {
+    align-items: stretch;
   }
 
   .broadcast-clash {
