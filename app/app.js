@@ -2016,11 +2016,7 @@ function renderBroadcastHero() {
     <section class="broadcast-hero">
       <div class="broadcast-copy">
         <span class="panel-kicker">${league ? "IPL League Live" : "Prediction League"}</span>
-        <h2>Matchday should feel like matchday, not a spreadsheet with buttons.</h2>
-        <p>
-          This app now moves like a cricket product: fixtures first, match centre next, standings always close,
-          and your league room available without dumping setup docs in front of players.
-        </p>
+        <h2>${escapeHtml(league?.season || "IPL 2026")}</h2>
         <div class="hero-actions">
           <a class="btn" href="${fixtureHref}">${focusMatch ? "Current match" : "Browse fixtures"}</a>
           <a class="ghost-btn" href="${buildRouteHref({ page: "account" })}">
@@ -2083,12 +2079,12 @@ function renderBroadcastHero() {
         <strong class="broadcast-title">${escapeHtml(focusTitle)}</strong>
         <div class="broadcast-clash">
           <div class="broadcast-team">
-            <span>${escapeHtml(getTeamShortCode(focusMatch?.team_a || "Team A"))}</span>
+            ${renderTeamMark(focusMatch?.team_a || "Team A", "hero")}
             <strong>${escapeHtml(focusMatch?.team_a || "Team A")}</strong>
           </div>
           <div class="broadcast-versus">VS</div>
           <div class="broadcast-team">
-            <span>${escapeHtml(getTeamShortCode(focusMatch?.team_b || "Team B"))}</span>
+            ${renderTeamMark(focusMatch?.team_b || "Team B", "hero")}
             <strong>${escapeHtml(focusMatch?.team_b || "Team B")}</strong>
           </div>
         </div>
