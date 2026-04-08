@@ -4297,11 +4297,7 @@ function getMatchPredictionScoreRows(match) {
     return [];
   }
 
-  const actualScore = Number(result.first_innings_total);
   const matchPredictions = getPredictionsForMatch(match.id);
-  const scoreWinnerId = Number.isFinite(actualScore)
-    ? getScorePredictionWinnerId(matchPredictions, actualScore)
-    : null;
 
   return state.members
     .map((member) => {
@@ -4316,7 +4312,9 @@ function getMatchPredictionScoreRows(match) {
           : 0;
       const teamPoints =
         prediction && prediction.team_pick && result.winner_team === prediction.team_pick ? 50 : 0;
-      const scorePoints = prediction?.id && scoreWinnerId === prediction.id ? 10 : 0;
+      const scorePoints = prediction
+        ? calculateScorePointsForPrediction(prediction, result, matchPredictions)
+        : 0;
       const totalPoints = batsmanPoints + bowlerPoints + teamPoints + scorePoints;
 
       return {
