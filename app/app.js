@@ -2022,9 +2022,9 @@ function renderBroadcastHero() {
           and your league room available without dumping setup docs in front of players.
         </p>
         <div class="hero-actions">
-          <a class="btn" href="${fixtureHref}">${focusMatch ? "Open current match" : "Browse fixtures"}</a>
+          <a class="btn" href="${fixtureHref}">${focusMatch ? "Current match" : "Browse fixtures"}</a>
           <a class="ghost-btn" href="${buildRouteHref({ page: "account" })}">
-            ${isAdmin ? "Open admin" : "Open profile"}
+            ${isAdmin ? "League controls" : "Open profile"}
           </a>
         </div>
         ${
@@ -2035,16 +2035,17 @@ function renderBroadcastHero() {
                   leagueEnded
                     ? `<span class="chip broadcast-control-chip"><strong>Season</strong>Ended</span>`
                     : `
-                      <span class="chip broadcast-control-chip"><strong>Invite</strong>${escapeHtml(league.invite_code || "-")}</span>
                       <button
-                        class="ghost-btn hero-icon-btn"
+                        class="ghost-btn broadcast-control-chip broadcast-copy-chip"
                         type="button"
                         data-action="copy-invite-code"
                         data-invite-code="${escapeAttribute(league.invite_code || "")}"
                         aria-label="Copy invite code"
                         title="Copy invite code"
                       >
-                        <span aria-hidden="true">⧉</span>
+                        <strong>Invite</strong>
+                        <span>${escapeHtml(league.invite_code || "-")}</span>
+                        <span class="broadcast-copy-icon" aria-hidden="true">⧉</span>
                       </button>
                     `
                 }

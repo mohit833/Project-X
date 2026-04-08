@@ -516,6 +516,7 @@ button {
   gap: 10px;
   border: 0;
   border-radius: 999px;
+  text-decoration: none;
   transition:
     transform 180ms ease,
     opacity 180ms ease,
@@ -3991,12 +3992,23 @@ body[data-theme="light"] .match-rail-item.active {
   color: #ffffff;
 }
 
-.hero-icon-btn {
-  width: 48px;
-  height: 48px;
-  padding: 0;
-  border-radius: 16px;
-  font-size: 1.12rem;
+.broadcast-control-chip strong {
+  color: #ffffff;
+}
+
+.broadcast-copy-chip {
+  padding-right: 14px;
+}
+
+.broadcast-copy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 0.98rem;
   flex: 0 0 auto;
 }
 
