@@ -1679,6 +1679,9 @@ button {
 
 .leader-spotlight-panel {
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .leader-spotlight-header {
@@ -1705,6 +1708,7 @@ button {
   overflow: hidden;
   display: grid;
   gap: 16px;
+  width: min(760px, 100%);
   padding: 20px 22px;
   border-radius: 26px;
   border: 1px solid rgba(255, 184, 77, 0.26);
@@ -1774,8 +1778,8 @@ button {
 
 .leader-spotlight-showcase {
   position: relative;
-  width: 140px;
-  min-height: 140px;
+  width: 126px;
+  min-height: 126px;
   display: grid;
   place-items: center;
   padding: 8px;
@@ -1823,8 +1827,8 @@ button {
 .leader-spotlight-crest {
   position: relative;
   z-index: 1;
-  width: 106px;
-  height: 106px;
+  width: 96px;
+  height: 96px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -1846,8 +1850,8 @@ button {
 }
 
 .leader-spotlight-avatar.member-avatar-lg {
-  width: 82px;
-  height: 82px;
+  width: 74px;
+  height: 74px;
   border-width: 3px;
   box-shadow: 0 18px 36px rgba(7, 18, 35, 0.34);
 }
@@ -1856,6 +1860,8 @@ button {
   display: grid;
   gap: 8px;
   min-width: 0;
+  position: relative;
+  padding-right: 150px;
 }
 
 .leader-spotlight-title-row {
@@ -1880,26 +1886,29 @@ button {
 }
 
 .leader-spotlight-inline-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  position: absolute;
+  right: 0;
+  top: 6px;
+  display: grid;
+  gap: 8px;
 }
 
 .leader-inline-stat {
   display: grid;
   gap: 4px;
-  min-width: 106px;
-  padding: 12px 14px;
-  border-radius: 18px;
+  min-width: 116px;
+  padding: 10px 12px;
+  border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04)),
     rgba(255, 255, 255, 0.04);
+  box-shadow: 0 14px 28px rgba(5, 14, 28, 0.22);
 }
 
 .leader-inline-stat span {
   color: var(--text-dim);
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -1907,7 +1916,7 @@ button {
 .leader-inline-stat strong {
   display: block;
   font-family: var(--font-display);
-  font-size: 1.25rem;
+  font-size: 1.1rem;
   line-height: 1;
 }
 
@@ -4774,7 +4783,12 @@ body[data-theme="light"] .league-command-stage {
     min-height: 124px;
   }
 
+  .leader-spotlight-copy {
+    padding-right: 0;
+  }
+
   .leader-spotlight-inline-stats {
+    position: static;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
