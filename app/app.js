@@ -3047,35 +3047,46 @@ function renderLeaderSpotlightCard(entry) {
     <article class="leader-spotlight-card ${sameUser ? "current-user" : ""}">
       <div class="leader-spotlight-aura" aria-hidden="true"></div>
       <div class="leader-spotlight-main">
-        ${renderLeaderSpotlightGraphic(displayName, avatarUrl)}
-        <div class="leader-spotlight-copy">
-          <div class="leader-spotlight-title-row">
-            <span class="leader-spotlight-rank">#1</span>
-            <span class="panel-kicker">Season leader</span>
+        <div class="leader-spotlight-body">
+          ${renderLeaderSpotlightGraphic(displayName, avatarUrl)}
+          <div class="leader-spotlight-copy">
+            <div class="leader-spotlight-title-row">
+              <span class="leader-spotlight-rank">#1</span>
+              <span class="panel-kicker">Season leader</span>
+            </div>
+            <strong>${escapeHtml(displayName)}</strong>
+            <div class="leader-spotlight-meta">
+              <span class="subtle">${escapeHtml(entry.matches_joined || 0)} matches joined</span>
+              <span class="subtle">${escapeHtml(entry.role || "member")}</span>
+              ${sameUser ? `<span class="chip"><strong>You</strong>On top</span>` : ""}
+            </div>
           </div>
-          <strong>${escapeHtml(displayName)}</strong>
-          <div class="leader-spotlight-meta">
-            <span class="subtle">${escapeHtml(entry.matches_joined || 0)} matches joined</span>
-            <span class="subtle">${escapeHtml(entry.role || "member")}</span>
-            ${sameUser ? `<span class="chip"><strong>You</strong>On top</span>` : ""}
-          </div>
-          <div class="leader-spotlight-inline-stats">
-            <div class="leader-inline-stat">
-              <span>Pts</span>
-              <strong>${escapeHtml(entry.total_points ?? 0)}</strong>
+          <div class="leader-spotlight-bubbles" aria-label="Leader stats">
+            <div class="leader-float-chip leader-float-chip-points">
+              <span class="leader-float-chip-icon">P</span>
+              <span class="leader-float-chip-copy">
+                <span>Pts</span>
+                <strong>${escapeHtml(entry.total_points ?? 0)}</strong>
+              </span>
             </div>
             ${
               pointsLead !== null
                 ? `
-                  <div class="leader-inline-stat">
-                    <span>Lead</span>
-                    <strong>+${escapeHtml(pointsLead)}</strong>
+                  <div class="leader-float-chip leader-float-chip-lead">
+                    <span class="leader-float-chip-icon">L</span>
+                    <span class="leader-float-chip-copy">
+                      <span>Lead</span>
+                      <strong>+${escapeHtml(pointsLead)}</strong>
+                    </span>
                   </div>
                 `
                 : `
-                  <div class="leader-inline-stat">
-                    <span>Status</span>
-                    <strong>Pace-setter</strong>
+                  <div class="leader-float-chip leader-float-chip-lead">
+                    <span class="leader-float-chip-icon">S</span>
+                    <span class="leader-float-chip-copy">
+                      <span>Status</span>
+                      <strong>Pace</strong>
+                    </span>
                   </div>
                 `
             }
