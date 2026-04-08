@@ -3038,10 +3038,6 @@ function renderLeaderSpotlightCard(entry) {
   const avatarUrl =
     entry.avatar_url ||
     (sameUser ? state.profile?.avatar_url || getUserAvatarUrl(state.user) : "");
-  const runnerUp = state.leaderboard[1];
-  const pointsLead = runnerUp
-    ? Math.max(0, Number(entry.total_points || 0) - Number(runnerUp.total_points || 0))
-    : null;
 
   return `
     <article class="leader-spotlight-card ${sameUser ? "current-user" : ""}">
@@ -3069,27 +3065,6 @@ function renderLeaderSpotlightCard(entry) {
                 <strong>${escapeHtml(entry.total_points ?? 0)}</strong>
               </span>
             </div>
-            ${
-              pointsLead !== null
-                ? `
-                  <div class="leader-float-chip leader-float-chip-lead">
-                    <span class="leader-float-chip-icon">L</span>
-                    <span class="leader-float-chip-copy">
-                      <span>Lead</span>
-                      <strong>+${escapeHtml(pointsLead)}</strong>
-                    </span>
-                  </div>
-                `
-                : `
-                  <div class="leader-float-chip leader-float-chip-lead">
-                    <span class="leader-float-chip-icon">S</span>
-                    <span class="leader-float-chip-copy">
-                      <span>Status</span>
-                      <strong>Pace</strong>
-                    </span>
-                  </div>
-                `
-            }
           </div>
         </div>
       </div>
