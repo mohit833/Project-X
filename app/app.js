@@ -2893,32 +2893,6 @@ function renderAccountPage() {
           </div>
         </div>
       </section>
-      ${
-        isAdmin
-          ? `
-            <section class="spotlight-link-grid">
-              ${renderQuickLinkCard(
-                { page: "current" },
-                "Today first",
-                "Current Match",
-                "Go straight to the fixture that still needs attention. The admin controls themselves stay on this page now.",
-              )}
-              ${renderQuickLinkCard(
-                { page: "matches", section: "fixtures", matchId: actionMatch?.id || getSelectedMatch()?.id },
-                "Season slate",
-                "Fixtures",
-                "Jump to the full fixture wall whenever you want the whole season instead of just the current runway.",
-              )}
-              ${renderQuickLinkCard(
-                { page: "standings" },
-                "League race",
-                "Leaderboard",
-                "Check the table right next to your admin workflow, so scoring changes are easy to verify.",
-              )}
-            </section>
-          `
-          : ""
-      }
       <div class="profile-route-grid">
         <div class="profile-route-stack">
         ${renderAccountPanel()}
