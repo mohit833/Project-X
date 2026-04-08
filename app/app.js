@@ -2990,6 +2990,10 @@ function renderLeagueGate(title, description) {
 }
 
 function renderLeaderboardPanel(title = "Leaderboard") {
+  if (title === "Top of the Table") {
+    return renderLeaderSpotlightPanel(title);
+  }
+
   return `
     <section class="panel">
       <div class="section-head">
@@ -3006,6 +3010,80 @@ function renderLeaderboardPanel(title = "Leaderboard") {
           : `<div class="empty-state">Points appear after the first scored match.</div>`
       }
     </section>
+  `;
+}
+
+function renderLeaderSpotlightPanel(title = "Top of the Table") {
+  const leader = state.leaderboard[0];
+
+  return `
+    <section class="panel leader-spotlight-panel">
+      <div class="section-head">
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          <p>Season leader right now.</p>
+        </div>
+      </div>
+      ${
+        leader
+          ? renderLeaderSpotlightCard(leader)
+          : `<div class="empty-state">Points appear after the first scored match.</div>`
+      }
+    </section>
+  `;
+}
+
+function renderLeaderSpotlightCard(entry) {
+  const sameUser = entry.user_id === state.user?.id;
+  const displayName = entry.display_name || "Player";
+  const avatarUrl =
+    entry.avatar_url ||
+    (sameUser ? state.profile?.avatar_url || getUserAvatarUrl(state.user) : "");
+  const runnerUp = state.leaderboard[1];
+  const pointsLead = runnerUp
+    ? Math.max(0, Number(entry.total_points || 0) - Number(runnerUp.total_points || 0))
+    : null;
+
+  return `
+    <article class="leader-spotlight-card ${sameUser ? "current-user" : ""}">
+      <div class="leader-spotlight-aura" aria-hidden="true"></div>
+      <div class="leader-spotlight-main">
+        <div class="leader-spotlight-rank">#1</div>
+        <div class="leader-spotlight-profile">
+          ${renderMemberAvatar(displayName, "lg", "", avatarUrl)}
+          <div class="leader-spotlight-copy">
+            <span class="panel-kicker">Season leader</span>
+            <strong>${escapeHtml(displayName)}</strong>
+            <div class="leader-spotlight-meta">
+              <span class="subtle">${escapeHtml(entry.matches_joined || 0)} matches joined</span>
+              <span class="subtle">${escapeHtml(entry.role || "member")}</span>
+              ${sameUser ? `<span class="chip"><strong>You</strong>On top</span>` : ""}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="leader-spotlight-stats">
+        <div class="leader-spotlight-score">
+          <span>Total points</span>
+          <strong>${escapeHtml(entry.total_points ?? 0)}</strong>
+        </div>
+        ${
+          pointsLead !== null
+            ? `
+              <div class="leader-spotlight-edge">
+                <span>Lead</span>
+                <strong>+${escapeHtml(pointsLead)}</strong>
+              </div>
+            `
+            : `
+              <div class="leader-spotlight-edge">
+                <span>Status</span>
+                <strong>Sets the pace</strong>
+              </div>
+            `
+        }
+      </div>
+    </article>
   `;
 }
 
