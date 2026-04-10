@@ -7188,14 +7188,18 @@ function getLiveWindowState(match, prediction) {
     (currentBall !== null ? formatBallsAsOvers(currentBall) : null);
   const submissionStartsAt = null;
   const submissionWindowOpen = true;
+  const inningsStartedAt = match?.innings_started_at
+    ? new Date(match.innings_started_at).getTime()
+    : null;
+  const canUseTimeFallback = inningsStartedAt !== null;
   const coreLockedByTime = match?.picks_deadline_at
-    ? Date.now() > new Date(match.picks_deadline_at).getTime()
+    ? canUseTimeFallback && Date.now() > new Date(match.picks_deadline_at).getTime()
     : false;
   const scoreLockedByTime = match?.score_deadline_at
-    ? Date.now() > new Date(match.score_deadline_at).getTime()
+    ? canUseTimeFallback && Date.now() > new Date(match.score_deadline_at).getTime()
     : false;
   const scoreWindowOpenByTime = match?.picks_deadline_at
-    ? Date.now() >= new Date(match.picks_deadline_at).getTime()
+    ? canUseTimeFallback && Date.now() >= new Date(match.picks_deadline_at).getTime()
     : false;
   const coreLocked =
     currentBall !== null ? currentBall >= CORE_LOCK_BALL : coreLockedByTime;
@@ -8121,6 +8125,17 @@ async function upsertSyncedMatchRow(existingMatch, fixture) {
 function buildMatchPayloadFromFixture(fixture, existingMatch, notes) {
   const startsAt = fixture.starts_at || existingMatch?.starts_at;
   const nowIso = new Date().toISOString();
+  const detectedInningsStartAt =
+    existingMatch?.innings_started_at ||
+    (fixture.current_innings_ball !== null ? nowIso : null);
+  const shouldResetFallbackLocks =
+    fixture.current_innings_ball !== null && !existingMatch?.innings_started_at;
+  const picksDeadlineAt = shouldResetFallbackLocks
+    ? addMinutes(detectedInningsStartAt, 20) || addMinutes(startsAt, 20) || startsAt
+    : existingMatch?.picks_deadline_at || addMinutes(startsAt, 20) || startsAt;
+  const scoreDeadlineAt = shouldResetFallbackLocks
+    ? addMinutes(detectedInningsStartAt, 45) || addMinutes(startsAt, 45) || startsAt
+    : existingMatch?.score_deadline_at || addMinutes(startsAt, 45) || startsAt;
 
   return {
     title: fixture.title,
@@ -8128,14 +8143,10 @@ function buildMatchPayloadFromFixture(fixture, existingMatch, notes) {
     team_b: fixture.team_b,
     venue: fixture.venue || null,
     starts_at: startsAt,
-    innings_started_at:
-      existingMatch?.innings_started_at ||
-      (fixture.current_innings_ball !== null ? startsAt || nowIso : null),
+    innings_started_at: detectedInningsStartAt,
     playing_xi_announced_at: existingMatch?.playing_xi_announced_at || null,
-    picks_deadline_at:
-      existingMatch?.picks_deadline_at || addMinutes(startsAt, 20) || startsAt,
-    score_deadline_at:
-      existingMatch?.score_deadline_at || addMinutes(startsAt, 45) || startsAt,
+    picks_deadline_at: picksDeadlineAt,
+    score_deadline_at: scoreDeadlineAt,
     status:
       cleanNullableText(fixture.persisted_status, 20) ||
       cleanNullableText(fixture.status, 20) ||
