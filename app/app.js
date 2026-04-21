@@ -4674,6 +4674,8 @@ function renderAdminTools(match) {
   ).length;
   const defaultRecoveryEntry =
     recoveryEntries.find((entry) => !entry.hasCore) || recoveryEntries[0] || null;
+  const defaultScoreEntry =
+    recoveryEntries.find((entry) => entry.hasScore) || recoveryEntries[0] || null;
   const recoveryBatsmanOptions = match
     ? getSelectablePlayers(match, "batsman", defaultRecoveryEntry?.prediction || null)
     : [];
@@ -4695,7 +4697,7 @@ function renderAdminTools(match) {
         <div>
           <span class="panel-kicker">Creator console</span>
           <h3>Admin tools</h3>
-          <p>Use this space to sync the season, correct live timing, and recover gracefully if a feed misbehaves.</p>
+          <p>Use this space for league sync, prediction corrections, match control, and settlement fallback.</p>
         </div>
       </div>
       <div class="stack">
@@ -4703,22 +4705,14 @@ function renderAdminTools(match) {
           <div class="section-head">
             <div>
               <h4>IPL schedule sync</h4>
-              <p>Pull the full IPL ${escapeHtml(scheduleYear)} fixture list into this league so every match is visible from day one.</p>
+              <p>Refresh the IPL ${escapeHtml(scheduleYear)} fixture list for this league.</p>
             </div>
-          </div>
-          <div class="chip-list">
-            <span class="chip"><strong>Fixtures</strong>Official IPL</span>
-            <span class="chip"><strong>Live data</strong>Official IPL feeds</span>
-            <span class="chip"><strong>League</strong>IPL</span>
-            <span class="chip"><strong>Season</strong>${escapeHtml(scheduleYear)}</span>
-            <span class="chip"><strong>Matches in league</strong>${state.matches.length}</span>
-            <span class="chip"><strong>Polling</strong>${escapeHtml(pollingLabel)}</span>
           </div>
           <div class="split-line" style="margin-top: 1rem;">
             <button class="btn" type="button" data-action="load-provider-fixtures" ${state.loadingProviderFixtures ? "disabled" : ""}>
               ${state.loadingProviderFixtures ? "Syncing schedule..." : "Sync IPL schedule"}
             </button>
-            <span class="subtle">This creates or updates every IPL fixture for the selected league.</span>
+            <span class="subtle">${escapeHtml(state.matches.length)} fixtures loaded · polling ${escapeHtml(pollingLabel)}.</span>
           </div>
         </div>
         ${
@@ -4728,18 +4722,13 @@ function renderAdminTools(match) {
                 <div class="section-head">
                   <div>
                     <h4>Selected match sync</h4>
-                    <p>${match.external_match_id ? "Refresh this match now, or let auto sync keep the squads, innings clock, and results updated." : "This match is not linked to the live provider yet. Sync the full schedule first."}</p>
+                    <p>${match.external_match_id ? "Refresh this match, control auto sync, or re-run points after completion." : "This match is not linked to the live provider yet. Sync the schedule first."}</p>
                   </div>
                 </div>
                 ${
                   match.external_match_id
                     ? `
-                      <div class="chip-list">
-                        <span class="chip"><strong>Provider ID</strong>${escapeHtml(match.external_match_id)}</span>
-                        <span class="chip"><strong>Auto sync</strong>${match.auto_sync_enabled ? "On" : "Off"}</span>
-                        <span class="chip"><strong>Squads</strong>${escapeHtml(selectedSummary?.playingXiLabel || "Waiting")}</span>
-                        <span class="chip"><strong>Last sync</strong>${escapeHtml(selectedSummary?.lastSynced || "Never")}</span>
-                      </div>
+                      <p class="subtle">Provider ${escapeHtml(match.external_match_id)} · auto sync ${match.auto_sync_enabled ? "on" : "off"} · last sync ${escapeHtml(selectedSummary?.lastSynced || "never")}.</p>
                       <div class="split-line" style="margin-top: 1rem;">
                         <button class="btn" type="button" data-action="sync-selected-match" data-match-id="${match.id}" ${
                           state.syncingMatchIds.has(match.id) || selectedMatchStatus === "cancelled" ? "disabled" : ""
@@ -4784,13 +4773,8 @@ function renderAdminTools(match) {
                 <div class="section-head">
                   <div>
                     <h4>Set leaderboard total</h4>
-                    <p>Choose the member, type the final total you want them to have, and save. The app handles the correction behind the scenes.</p>
+                    <p>Set a member’s exact season total. The app stores the difference as a manual adjustment.</p>
                   </div>
-                </div>
-                <div class="chip-list">
-                  <span class="chip"><strong>Scope</strong>League total</span>
-                  <span class="chip"><strong>Action</strong>Set final score</span>
-                  <span class="chip"><strong>Saved in DB</strong>Yes</span>
                 </div>
                 <form class="form-grid" id="leaderboard-adjustment-form">
                   <input type="hidden" name="league_id" value="${match?.league_id || state.activeLeagueId || ""}" />
@@ -4835,7 +4819,7 @@ function renderAdminTools(match) {
                 <div class="section-head">
                   <div>
                     <h4>Match cancellation</h4>
-                    <p>Use this only when the fixture is officially abandoned or should not count at all. Once cancelled, any points from this match disappear from the leaderboard.</p>
+                    <p>Cancel abandoned/no-result fixtures. Existing points for this match are removed from leaderboard totals.</p>
                   </div>
                 </div>
                 ${
@@ -4875,19 +4859,67 @@ function renderAdminTools(match) {
               <div class="admin-card">
                 <div class="section-head">
                   <div>
-                    <h4>Prediction recovery</h4>
-                    <p>Use this when the platform bug wiped unsaved picks. It restores core picks for a member and can also repair their score call if needed.</p>
+                    <h4>Score correction</h4>
+                    <p>Change one member’s first-innings score call without touching their batsman, bowler, or winner.</p>
                   </div>
-                </div>
-                <div class="chip-list">
-                  <span class="chip"><strong>Members</strong>${recoveryEntries.length}</span>
-                  <span class="chip"><strong>Core missing</strong>${recoveryMissingCount}</span>
-                  <span class="chip"><strong>Score only</strong>${recoveryScoreOnlyCount}</span>
-                  <span class="chip"><strong>Window</strong>Admin recovery</span>
                 </div>
                 ${
                   selectedMatchStatus === "cancelled"
-                    ? `<div class="empty-state">This fixture is cancelled, so prediction recovery is frozen and no user picks from this match will contribute to scoring.</div>`
+                    ? `<div class="empty-state">This fixture is cancelled, so score correction is frozen.</div>`
+                    : `
+                      <form class="form-grid" id="admin-score-form">
+                        <input type="hidden" name="match_id" value="${match.id}" />
+                        <div class="field span-2">
+                          <label for="admin-score-member">Member</label>
+                          <select
+                            id="admin-score-member"
+                            name="target_user_id"
+                            ${!recoveryEntries.length ? "disabled" : ""}
+                          >
+                            <option value="">Choose member</option>
+                            ${renderAdminScoreMemberOptions(
+                              match.id,
+                              defaultScoreEntry?.member?.user_id || "",
+                            )}
+                          </select>
+                        </div>
+                        <div class="field span-2">
+                          <label for="admin-score-value">New score call</label>
+                          <input
+                            id="admin-score-value"
+                            type="text"
+                            name="predicted_score"
+                            inputmode="numeric"
+                            pattern="[0-9]*"
+                            maxlength="3"
+                            value="${escapeAttribute(defaultScoreEntry?.prediction?.predicted_score ?? "")}"
+                            placeholder="182"
+                            ${!recoveryEntries.length ? "disabled" : ""}
+                          />
+                        </div>
+                        <div class="field span-2">
+                          <small>Score values must still be unique for the match. Use core recovery below only when player picks also need repair.</small>
+                        </div>
+                        <div class="field span-2">
+                          <button class="btn" type="submit" ${!recoveryEntries.length ? "disabled" : ""}>
+                            Save score correction
+                          </button>
+                        </div>
+                      </form>
+                    `
+                }
+              </div>
+              <div class="admin-card">
+                <div class="section-head">
+                  <div>
+                    <h4>Core pick recovery</h4>
+                    <p>Repair batsman, bowler, and winner together if a member’s core pick was lost or entered incorrectly.</p>
+                  </div>
+                </div>
+                <p class="subtle">${recoveryMissingCount} members missing core picks · ${recoveryScoreOnlyCount} score-only entries.</p>
+                ${
+                  selectedMatchStatus === "cancelled"
+                    ? `<div class="empty-state">This fixture is cancelled, so core recovery is frozen.</div>`
                     : `
                       <form class="form-grid" id="admin-recovery-form">
                         <input type="hidden" name="match_id" value="${match.id}" />
@@ -4952,27 +4984,13 @@ function renderAdminTools(match) {
                           </select>
                         </div>
                         <div class="field span-2">
-                          <label for="admin-recovery-score">1st innings total</label>
-                          <input
-                            id="admin-recovery-score"
-                            type="text"
-                            name="predicted_score"
-                            inputmode="numeric"
-                            pattern="[0-9]*"
-                            maxlength="3"
-                            value="${escapeAttribute(defaultRecoveryEntry?.prediction?.predicted_score ?? "")}"
-                            placeholder="Leave blank to keep current score"
-                            ${!recoveryEntries.length ? "disabled" : ""}
-                          />
-                        </div>
-                        <div class="field span-2">
                           <small>
-                            Recovery bypasses the normal 3.1 and 7.1 user locks for admins only. Leave score blank if you only want to repair batsman, bowler, and winner.
+                            Core recovery only changes batsman, bowler, and winner. Use score correction above for score calls.
                           </small>
                         </div>
                         <div class="field span-2">
                           <button class="btn" type="submit" ${!recoveryEntries.length ? "disabled" : ""}>
-                            Recover member prediction
+                            Save core recovery
                           </button>
                         </div>
                       </form>
@@ -5174,6 +5192,11 @@ async function handleSubmit(event) {
 
     if (form.id === "result-form") {
       await saveResult(form);
+      return;
+    }
+
+    if (form.id === "admin-score-form") {
+      await saveAdminScoreCorrection(form);
       return;
     }
 
@@ -5429,9 +5452,6 @@ async function saveAdminRecovery(form) {
   const batsmanName = cleanNullableText(formData.get("batsman_name"), 80);
   const bowlerName = cleanNullableText(formData.get("bowler_name"), 80);
   const teamPick = cleanNullableText(formData.get("team_pick"), 80);
-  const predictedScoreRaw = String(formData.get("predicted_score") || "").trim();
-  const predictedScore =
-    predictedScoreRaw === "" ? null : Number.parseInt(predictedScoreRaw, 10);
   const member = state.members.find((entry) => entry.user_id === targetUserId) || null;
 
   if (!matchId) {
@@ -5446,10 +5466,6 @@ async function saveAdminRecovery(form) {
     throw new Error("Recovery needs batsman, bowler, and winning team.");
   }
 
-  if (predictedScoreRaw !== "" && !/^\d+$/.test(predictedScoreRaw)) {
-    throw new Error("Recovered score must contain numbers only.");
-  }
-
   await withPendingForm(form, "Recovering picks...", async () => {
     const payload = {
       p_match_id: matchId,
@@ -5459,18 +5475,12 @@ async function saveAdminRecovery(form) {
       p_team_pick: teamPick,
     };
 
-    if (predictedScore !== null) {
-      payload.p_predicted_score = predictedScore;
-    }
-
     const { error } = await state.client.rpc("admin_recover_prediction", payload);
 
     if (error) {
       if (error.code === "PGRST202") {
         throw new Error(
-          predictedScore !== null
-            ? "Supabase is still on the older admin recovery function. Run the admin recovery migration in SQL editor, then retry score recovery."
-            : "Supabase is missing the admin recovery function. Run the admin recovery migration in SQL editor, then retry.",
+          "Supabase is missing the admin recovery function. Run the admin recovery migration in SQL editor, then retry.",
         );
       }
       throw error;
@@ -5482,6 +5492,53 @@ async function saveAdminRecovery(form) {
   render();
   flash(
     `Recovered prediction for ${member?.display_name || "that member"}.`,
+    "success",
+  );
+}
+
+async function saveAdminScoreCorrection(form) {
+  const formData = new FormData(form);
+  const matchId = String(formData.get("match_id") || "");
+  const targetUserId = String(formData.get("target_user_id") || "").trim();
+  const predictedScoreRaw = String(formData.get("predicted_score") || "").trim();
+  const member = state.members.find((entry) => entry.user_id === targetUserId) || null;
+
+  if (!matchId) {
+    throw new Error("Match id is missing.");
+  }
+
+  if (!targetUserId) {
+    throw new Error("Choose the member whose score you want to correct.");
+  }
+
+  if (!/^\d+$/.test(predictedScoreRaw)) {
+    throw new Error("Score correction needs a whole number like 182.");
+  }
+
+  const predictedScore = Number.parseInt(predictedScoreRaw, 10);
+
+  await withPendingForm(form, "Saving score...", async () => {
+    const { error } = await state.client.rpc("admin_update_prediction_score", {
+      p_match_id: matchId,
+      p_target_user_id: targetUserId,
+      p_predicted_score: predictedScore,
+    });
+
+    if (error) {
+      if (error.code === "PGRST202") {
+        throw new Error(
+          "Supabase is missing the admin score correction function. Run the admin score correction migration in SQL editor, then retry.",
+        );
+      }
+      throw error;
+    }
+
+    await loadLeagueBundle();
+  });
+
+  render();
+  flash(
+    `Updated score prediction for ${member?.display_name || "that member"}.`,
     "success",
   );
 }
@@ -5989,6 +6046,16 @@ function handleChange(event) {
   if (target instanceof HTMLSelectElement && target.id === "fixture-status-filter") {
     state.fixtureFilters.status = target.value || "scheduled";
     render();
+    return;
+  }
+
+  if (target instanceof HTMLSelectElement && target.id === "admin-recovery-member") {
+    syncAdminRecoveryForm(target.form);
+    return;
+  }
+
+  if (target instanceof HTMLSelectElement && target.id === "admin-score-member") {
+    syncAdminScoreCorrectionForm(target.form);
     return;
   }
 
@@ -6511,17 +6578,79 @@ function getAdminRecoveryEntries(matchId) {
 
 function renderAdminRecoveryMemberOptions(matchId, selectedUserId = "") {
   return getAdminRecoveryEntries(matchId)
-    .map(({ member, hasCore, hasScore }) => {
+    .map(({ member, prediction, hasCore, hasScore }) => {
       const label = hasCore ? "core saved" : hasScore ? "score only" : "core missing";
       return `
-        <option value="${escapeAttribute(member.user_id)}" ${
-          String(member.user_id || "") === String(selectedUserId || "") ? "selected" : ""
-        }>
+        <option
+          value="${escapeAttribute(member.user_id)}"
+          data-batsman="${escapeAttribute(prediction?.batsman_name || "")}"
+          data-bowler="${escapeAttribute(prediction?.bowler_name || "")}"
+          data-team-pick="${escapeAttribute(prediction?.team_pick || "")}"
+          ${String(member.user_id || "") === String(selectedUserId || "") ? "selected" : ""}
+        >
           ${escapeHtml(member.display_name || "Player")} · ${escapeHtml(label)}
         </option>
       `;
     })
     .join("");
+}
+
+function renderAdminScoreMemberOptions(matchId, selectedUserId = "") {
+  return getAdminRecoveryEntries(matchId)
+    .map(({ member, prediction, hasScore }) => {
+      const score =
+        prediction?.predicted_score !== null && prediction?.predicted_score !== undefined
+          ? String(prediction.predicted_score)
+          : "";
+      const label = hasScore ? `score ${score}` : "no score";
+      return `
+        <option
+          value="${escapeAttribute(member.user_id)}"
+          data-score="${escapeAttribute(score)}"
+          ${String(member.user_id || "") === String(selectedUserId || "") ? "selected" : ""}
+        >
+          ${escapeHtml(member.display_name || "Player")} · ${escapeHtml(label)}
+        </option>
+      `;
+    })
+    .join("");
+}
+
+function syncAdminRecoveryForm(form) {
+  if (!(form instanceof HTMLFormElement) || form.id !== "admin-recovery-form") {
+    return;
+  }
+
+  const select = form.querySelector("#admin-recovery-member");
+  const selected =
+    select instanceof HTMLSelectElement ? select.selectedOptions[0] || null : null;
+  const values = {
+    "#admin-recovery-batsman": selected?.dataset.batsman || "",
+    "#admin-recovery-bowler": selected?.dataset.bowler || "",
+    "#admin-recovery-team": selected?.dataset.teamPick || "",
+  };
+
+  for (const [selector, value] of Object.entries(values)) {
+    const field = form.querySelector(selector);
+    if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement) {
+      field.value = value;
+    }
+  }
+}
+
+function syncAdminScoreCorrectionForm(form) {
+  if (!(form instanceof HTMLFormElement) || form.id !== "admin-score-form") {
+    return;
+  }
+
+  const select = form.querySelector("#admin-score-member");
+  const selected =
+    select instanceof HTMLSelectElement ? select.selectedOptions[0] || null : null;
+  const scoreInput = form.querySelector("#admin-score-value");
+
+  if (scoreInput instanceof HTMLInputElement) {
+    scoreInput.value = selected?.dataset.score || "";
+  }
 }
 
 function renderLeaderboardAdjustmentMemberOptions(selectedUserId = "") {
