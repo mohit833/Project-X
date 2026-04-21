@@ -10,6 +10,11 @@ const MATCH_CENTRE_PANELS = [
   { key: "squads", label: "Squads", panelId: "squad-panel" },
   { key: "result", label: "Result", panelId: "result-panel", requiresResult: true },
 ];
+const CORE_PICK_FIELDS = [
+  { name: "batsman_name", label: "batsman" },
+  { name: "bowler_name", label: "bowler" },
+  { name: "team_pick", label: "winning team" },
+];
 const TEAM_BRANDS = {
   "chennai-super-kings": {
     short: "CSK",
@@ -4056,6 +4061,9 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
   const syncSummary = getMatchSyncSummary(match);
   const canEditCore = !leagueEnded && liveWindow.coreWindowOpen;
   const canEditScore = !leagueEnded && liveWindow.scoreWindowOpen;
+  const coreCompletion = getCorePickCompletion(editablePrediction);
+  const canSubmitCore = canEditCore && hasSquad && coreCompletion.complete;
+  const coreCompletionMessage = getCorePickCompletionMessage(coreCompletion);
   const windowMessage = leagueEnded
     ? "This league has ended. Picks stay visible, but no more changes can be made."
     : status === "finalizing"
@@ -4073,7 +4081,9 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
       ? "Loading official team squads"
       : "Waiting for official team squads"
     : canEditCore
-      ? "Save player picks"
+      ? coreCompletion.complete
+        ? "Save player picks"
+        : "Complete all three picks"
       : "Player picks locked";
   const scoreButtonLabel = leagueEnded
     ? "League ended"
@@ -4238,8 +4248,35 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
                           }
                         </small>
                       </div>
+                      ${
+                        canEditCore && hasSquad
+                          ? `
+                            <div class="field span-2">
+                              <div class="core-completion-note ${
+                                coreCompletion.complete
+                                  ? "is-complete"
+                                  : coreCompletion.partial
+                                    ? "is-warning"
+                                    : "is-idle"
+                              }" data-core-completion-note aria-live="polite">
+                                <span class="core-completion-count" data-core-completion-status>${coreCompletion.filledCount}/${CORE_PICK_FIELDS.length}</span>
+                                <span data-core-completion-message>${escapeHtml(coreCompletionMessage)}</span>
+                              </div>
+                            </div>
+                          `
+                          : ""
+                      }
                       <div class="field span-2">
-                        <button class="btn" type="submit" ${!canEditCore || !hasSquad ? "disabled" : ""}>${coreButtonLabel}</button>
+                        <button
+                          class="btn"
+                          type="submit"
+                          data-core-submit
+                          data-can-edit-core="${canEditCore ? "true" : "false"}"
+                          data-has-squad="${hasSquad ? "true" : "false"}"
+                          data-ready-label="Save player picks"
+                          data-incomplete-label="Complete all three picks"
+                          ${!canSubmitCore ? "disabled" : ""}
+                        >${coreButtonLabel}</button>
                       </div>
                     </form>
                   </div>
@@ -5302,7 +5339,18 @@ async function savePrediction(form) {
   const predictedScoreRaw = String(formData.get("predicted_score") || "").trim();
 
   const hasCoreValue = [batsmanName, bowlerName, teamPick].some(Boolean);
-  if (hasCoreValue && [batsmanName, bowlerName, teamPick].some((value) => !value)) {
+  const coreCompletion = getCorePickCompletion({
+    batsman_name: batsmanName,
+    bowler_name: bowlerName,
+    team_pick: teamPick,
+  });
+  if (form.id === "core-prediction-form" && !coreCompletion.complete) {
+    syncCorePickCompletionState(form);
+    throw new Error(getCorePickCompletionMessage(coreCompletion));
+  }
+
+  if (hasCoreValue && !coreCompletion.complete) {
+    syncCorePickCompletionState(form);
     throw new Error("Submit batsman, bowler, and winning team together.");
   }
 
@@ -5949,6 +5997,7 @@ function handleChange(event) {
   }
 
   syncPredictionDraftFromForm(target.form);
+  syncCorePickCompletionState(target.form);
   maybeWarnPredictionConflict(target.form);
 }
 
@@ -5991,6 +6040,7 @@ function handleInput(event) {
   }
 
   syncPredictionDraftFromForm(target.form);
+  syncCorePickCompletionState(target.form);
   maybeWarnPredictionConflict(target.form);
 }
 
@@ -6579,6 +6629,95 @@ function getEditablePrediction(matchId, prediction = getCurrentUserPrediction(ma
   };
 
   return hasPredictionDraftValues(mergedPrediction) ? mergedPrediction : null;
+}
+
+function formatInlineList(items) {
+  const values = items.filter(Boolean);
+  if (values.length <= 1) {
+    return values[0] || "";
+  }
+
+  if (values.length === 2) {
+    return values.join(" and ");
+  }
+
+  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+}
+
+function getCorePickCompletion(source = {}) {
+  const missingLabels = [];
+  let filledCount = 0;
+
+  CORE_PICK_FIELDS.forEach((field) => {
+    const value = cleanNullableText(source?.[field.name], 80);
+    if (value) {
+      filledCount += 1;
+      return;
+    }
+
+    missingLabels.push(field.label);
+  });
+
+  return {
+    filledCount,
+    missingLabels,
+    complete: filledCount === CORE_PICK_FIELDS.length,
+    partial: filledCount > 0 && filledCount < CORE_PICK_FIELDS.length,
+  };
+}
+
+function getCorePickCompletionMessage(completion) {
+  if (completion.complete) {
+    return "Ready to save.";
+  }
+
+  if (!completion.filledCount) {
+    return "Choose batsman, bowler, and winning team to enable save.";
+  }
+
+  return `Add ${formatInlineList(completion.missingLabels)} before saving.`;
+}
+
+function syncCorePickCompletionState(form) {
+  if (!(form instanceof HTMLFormElement) || form.id !== "core-prediction-form") {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const completion = getCorePickCompletion({
+    batsman_name: formData.get("batsman_name"),
+    bowler_name: formData.get("bowler_name"),
+    team_pick: formData.get("team_pick"),
+  });
+  const message = getCorePickCompletionMessage(completion);
+  const note = form.querySelector("[data-core-completion-note]");
+  const noteStatus = form.querySelector("[data-core-completion-status]");
+  const noteMessage = form.querySelector("[data-core-completion-message]");
+  const submitButton = form.querySelector("[data-core-submit]");
+  const canEdit = submitButton?.dataset.canEditCore === "true";
+  const hasSquad = submitButton?.dataset.hasSquad === "true";
+  const canSubmit = Boolean(canEdit && hasSquad && completion.complete);
+
+  if (note instanceof HTMLElement) {
+    note.classList.toggle("is-complete", completion.complete);
+    note.classList.toggle("is-warning", completion.partial);
+    note.classList.toggle("is-idle", !completion.complete && !completion.partial);
+  }
+
+  if (noteStatus instanceof HTMLElement) {
+    noteStatus.textContent = `${completion.filledCount}/${CORE_PICK_FIELDS.length}`;
+  }
+
+  if (noteMessage instanceof HTMLElement) {
+    noteMessage.textContent = message;
+  }
+
+  if (submitButton instanceof HTMLButtonElement) {
+    submitButton.disabled = !canSubmit;
+    submitButton.textContent = canSubmit
+      ? submitButton.dataset.readyLabel || "Save player picks"
+      : submitButton.dataset.incompleteLabel || "Complete all three picks";
+  }
 }
 
 function syncPredictionDraftFromForm(form) {
