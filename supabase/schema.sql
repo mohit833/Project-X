@@ -1277,6 +1277,8 @@ declare
   v_uid uuid := auth.uid();
   v_match public.matches%rowtype;
   v_winner text := trim(coalesce(p_winner_team, ''));
+  v_batsman_runs jsonb := public.normalize_score_map(p_batsman_runs);
+  v_bowler_wickets jsonb := public.normalize_score_map(p_bowler_wickets);
 begin
   if v_uid is null then
     raise exception 'You must be signed in.';
@@ -1307,6 +1309,10 @@ begin
     raise exception 'Winner must match one of the teams in this fixture.';
   end if;
 
+  if v_batsman_runs = '{}'::jsonb and v_bowler_wickets = '{}'::jsonb then
+    raise exception 'Scorecard player stats are not ready yet. Try syncing again before settling this match.';
+  end if;
+
   insert into public.match_results (
     match_id,
     winner_team,
@@ -1321,8 +1327,8 @@ begin
     p_match_id,
     v_winner,
     p_first_innings_total,
-    public.normalize_score_map(p_batsman_runs),
-    public.normalize_score_map(p_bowler_wickets),
+    v_batsman_runs,
+    v_bowler_wickets,
     nullif(trim(coalesce(p_notes, '')), ''),
     v_uid,
     timezone('utc', now())

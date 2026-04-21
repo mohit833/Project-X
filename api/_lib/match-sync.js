@@ -501,6 +501,10 @@ function extractOfficialSettlementPayload(bundle, match, snapshot) {
     return null;
   }
 
+  if (!hasSettlementStats(batsmanRuns, bowlerWickets)) {
+    return null;
+  }
+
   return {
     winner_team: winnerTeam,
     first_innings_total: firstInningsTotal,
@@ -509,6 +513,10 @@ function extractOfficialSettlementPayload(bundle, match, snapshot) {
     notes:
       "Settled automatically from the official IPL match-centre feeds. Players missing from the match-day squad or scorecard receive 0 points.",
   };
+}
+
+function hasSettlementStats(batsmanRuns, bowlerWickets) {
+  return Object.keys(batsmanRuns || {}).length > 0 || Object.keys(bowlerWickets || {}).length > 0;
 }
 
 function extractOfficialSettlementFirstInningsTotal(bundle, snapshot) {
