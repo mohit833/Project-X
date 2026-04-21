@@ -53,15 +53,18 @@ returns integer
 language sql
 immutable
 as $$
-  select coalesce(
-    (
-      select max(score_entry.value::integer)
-      from jsonb_each_text(coalesce(p_score_map, '{}'::jsonb)) as score_entry(key, value)
-      where score_entry.value ~ '^-?\d+$'
-        and public.normalize_pick(score_entry.key) = public.normalize_pick(p_player_name)
-    ),
-    0
-  );
+  select case
+    when nullif(trim(coalesce(p_player_name, '')), '') is null then 0
+    else coalesce(
+      (
+        select max(score_entry.value::integer)
+        from jsonb_each_text(coalesce(p_score_map, '{}'::jsonb)) as score_entry(key, value)
+        where score_entry.value ~ '^-?\d+$'
+          and public.normalize_pick(score_entry.key) = public.normalize_pick(p_player_name)
+      ),
+      0
+    )
+  end;
 $$;
 
 create or replace function public.generate_invite_code()
@@ -186,6 +189,17 @@ create table if not exists public.predictions (
     or
     (batsman_name is not null and bowler_name is not null and team_pick is not null)
   )
+);
+
+alter table public.predictions
+drop constraint if exists predictions_core_all_or_none_chk;
+
+alter table public.predictions
+add constraint predictions_core_all_or_none_chk
+check (
+  (batsman_name is null and bowler_name is null and team_pick is null)
+  or
+  (batsman_name is not null and bowler_name is not null and team_pick is not null)
 );
 
 drop index if exists predictions_match_batsman_unique_idx;
