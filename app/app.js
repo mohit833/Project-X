@@ -114,6 +114,7 @@ const state = {
   loading: false,
   realtimeChannel: null,
   reloadTimer: null,
+  predictionReloadTimer: null,
   leagueRefreshTimer: null,
   leagueRefreshBusy: false,
   lastLeagueRefreshKickAt: 0,
@@ -957,6 +958,139 @@ async function loadLeagueBundle() {
   setupAutoSync();
 }
 
+async function reloadPredictionsForActiveLeague() {
+  if (!state.activeLeagueId) {
+    return;
+  }
+
+  const { data, error } = await state.client
+    .from("predictions")
+    .select(
+      "id, league_id, match_id, user_id, batsman_name, bowler_name, team_pick, predicted_score, core_locked_due_to_pre_xi, core_submitted_at, score_submitted_at, created_at, updated_at, league_members(display_name)",
+    )
+    .eq("league_id", state.activeLeagueId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  state.predictions = data || [];
+  state.leaderboard = buildLeaderboardFromMatches(
+    state.members,
+    state.predictions,
+    state.matches,
+    state.pointAdjustments,
+  );
+  syncRouteSelection();
+}
+
+function queuePredictionReload(delayMs = 450) {
+  if (!state.activeLeagueId || !state.client || typeof window === "undefined") {
+    return;
+  }
+
+  if (state.predictionReloadTimer) {
+    window.clearTimeout(state.predictionReloadTimer);
+  }
+
+  state.predictionReloadTimer = window.setTimeout(async () => {
+    state.predictionReloadTimer = null;
+    try {
+      await reloadPredictionsForActiveLeague();
+      render();
+    } catch (error) {
+      console.error(error);
+    }
+  }, Math.max(Number(delayMs) || 0, 0));
+}
+
+function upsertPredictionLocally({
+  matchId,
+  userId,
+  displayName,
+  batsmanName,
+  bowlerName,
+  teamPick,
+  predictedScore,
+  setCoreTimestamp = false,
+  setScoreTimestamp = false,
+  coreLockedDueToPreXi,
+} = {}) {
+  if (!matchId || !userId || !state.activeLeagueId) {
+    return;
+  }
+
+  const existingIndex = state.predictions.findIndex(
+    (prediction) => prediction.match_id === matchId && prediction.user_id === userId,
+  );
+  const existingPrediction = existingIndex >= 0 ? state.predictions[existingIndex] : null;
+  const nowIso = new Date().toISOString();
+  const nextPrediction = {
+    id: existingPrediction?.id || `local-${matchId}-${userId}`,
+    league_id: state.activeLeagueId,
+    match_id: matchId,
+    user_id: userId,
+    batsman_name: existingPrediction?.batsman_name || null,
+    bowler_name: existingPrediction?.bowler_name || null,
+    team_pick: existingPrediction?.team_pick || null,
+    predicted_score: existingPrediction?.predicted_score ?? null,
+    core_locked_due_to_pre_xi: existingPrediction?.core_locked_due_to_pre_xi || false,
+    core_submitted_at: existingPrediction?.core_submitted_at || null,
+    score_submitted_at: existingPrediction?.score_submitted_at || null,
+    created_at: existingPrediction?.created_at || nowIso,
+    updated_at: nowIso,
+    league_members: {
+      display_name:
+        displayName ||
+        existingPrediction?.league_members?.display_name ||
+        state.members.find((member) => member.user_id === userId)?.display_name ||
+        "Player",
+    },
+  };
+
+  if (batsmanName !== undefined) {
+    nextPrediction.batsman_name = batsmanName;
+  }
+
+  if (bowlerName !== undefined) {
+    nextPrediction.bowler_name = bowlerName;
+  }
+
+  if (teamPick !== undefined) {
+    nextPrediction.team_pick = teamPick;
+  }
+
+  if (predictedScore !== undefined) {
+    nextPrediction.predicted_score = predictedScore;
+  }
+
+  if (setCoreTimestamp) {
+    nextPrediction.core_submitted_at = nowIso;
+    if (coreLockedDueToPreXi !== undefined) {
+      nextPrediction.core_locked_due_to_pre_xi = Boolean(coreLockedDueToPreXi);
+    }
+  }
+
+  if (setScoreTimestamp) {
+    nextPrediction.score_submitted_at = nowIso;
+  }
+
+  if (existingIndex >= 0) {
+    state.predictions.splice(existingIndex, 1, nextPrediction);
+  } else {
+    state.predictions = [...state.predictions, nextPrediction];
+  }
+
+  state.leaderboard = buildLeaderboardFromMatches(
+    state.members,
+    state.predictions,
+    state.matches,
+    state.pointAdjustments,
+  );
+  syncRouteSelection();
+}
+
 function readStoredTheme() {
   if (typeof window === "undefined") {
     return "light";
@@ -1268,7 +1402,7 @@ function requestLeagueRefresh({ force = false } = {}) {
     return;
   }
 
-  if (isPredictionFormActive()) {
+  if (isRefreshSensitiveInteractionActive()) {
     return;
   }
 
@@ -1297,7 +1431,7 @@ function requestAutoSync({ force = false } = {}) {
     return;
   }
 
-  if (isPredictionFormActive()) {
+  if (isRefreshSensitiveInteractionActive()) {
     return;
   }
 
@@ -1325,7 +1459,7 @@ function handleAutoSyncResume() {
 }
 
 function requestForegroundRefresh() {
-  if (document.hidden || isPredictionFormActive() || state.playerPicker) {
+  if (document.hidden || isRefreshSensitiveInteractionActive()) {
     return;
   }
 
@@ -1367,6 +1501,10 @@ function shouldProbeVisibleMatch(match) {
 }
 
 async function maybeProbeVisibleMatchState() {
+  if (isRefreshSensitiveInteractionActive()) {
+    return;
+  }
+
   const route = getCurrentRoute();
   if (!["home", "current", "matches", "league"].includes(route.page)) {
     return;
@@ -4685,7 +4823,7 @@ function renderAdminTools(match) {
   const recoveryBatsmanListId = match ? `admin-recovery-batsmen-${match.id}` : "";
   const recoveryBowlerListId = match ? `admin-recovery-bowlers-${match.id}` : "";
   const defaultAdjustmentMember = state.leaderboard[0] || state.members[0] || null;
-  const pollingIntervalMs = Number(APP_CONFIG.AUTO_SYNC_INTERVAL_MS) || 90 * 1000;
+  const pollingIntervalMs = getSyncPollingIntervalMs();
   const pollingLabel =
     pollingIntervalMs >= 60 * 1000
       ? `${Math.round(pollingIntervalMs / 60000)} min`
@@ -5436,7 +5574,19 @@ async function savePrediction(form) {
         throw error;
       }
 
-      await loadLeagueBundle();
+      upsertPredictionLocally({
+        matchId,
+        userId: state.user?.id,
+        displayName: currentMembership()?.display_name || state.profile?.display_name || "",
+        batsmanName: hasCoreValue ? batsmanName : undefined,
+        bowlerName: hasCoreValue ? bowlerName : undefined,
+        teamPick: hasCoreValue ? teamPick : undefined,
+        predictedScore: predictedScore !== null ? predictedScore : undefined,
+        setCoreTimestamp: hasCoreValue,
+        setScoreTimestamp: predictedScore !== null,
+        coreLockedDueToPreXi: hasCoreValue ? isCoreSubmissionBeforeOfficialXi(match) : undefined,
+      });
+      queuePredictionReload();
     },
   );
   clearPredictionDraft(matchId);
@@ -5486,7 +5636,19 @@ async function saveAdminRecovery(form) {
       throw error;
     }
 
-    await loadLeagueBundle();
+    upsertPredictionLocally({
+      matchId,
+      userId: targetUserId,
+      displayName: member?.display_name || "",
+      batsmanName,
+      bowlerName,
+      teamPick,
+      setCoreTimestamp: true,
+      coreLockedDueToPreXi: isCoreSubmissionBeforeOfficialXi(
+        state.matches.find((entry) => entry.id === matchId) || null,
+      ),
+    });
+    queuePredictionReload();
   });
 
   render();
@@ -5533,7 +5695,14 @@ async function saveAdminScoreCorrection(form) {
       throw error;
     }
 
-    await loadLeagueBundle();
+    upsertPredictionLocally({
+      matchId,
+      userId: targetUserId,
+      displayName: member?.display_name || "",
+      predictedScore,
+      setScoreTimestamp: true,
+    });
+    queuePredictionReload();
   });
 
   render();
@@ -6887,6 +7056,34 @@ function isPredictionFormActive() {
   );
 }
 
+function isRefreshSensitiveInteractionActive() {
+  if (state.playerPicker || state.predictionScorecardMatchId || state.memberProfileUserId) {
+    return true;
+  }
+
+  const activeElement = document.activeElement;
+  return Boolean(
+    activeElement instanceof HTMLElement &&
+      activeElement.matches("input, textarea, select") &&
+      activeElement.closest(
+        [
+          "#core-prediction-form",
+          "#score-prediction-form",
+          "#admin-score-form",
+          "#admin-recovery-form",
+          "#leaderboard-adjustment-form",
+          "#admin-override-form",
+          "#result-form",
+          "#create-match-form",
+          "#timeline-form",
+          "#profile-form",
+          "#create-league-form",
+          "#join-league-form",
+        ].join(", "),
+      ),
+  );
+}
+
 function isMatchFinalizing(match) {
   return Boolean(match?.status === "completed" && !getMatchResult(match));
 }
@@ -7516,6 +7713,19 @@ function formatScoreLockLabel(match, liveWindow) {
   return liveWindow.scoreLocked
     ? `Locked ${formatDate(match?.score_deadline_at) || "after 7.1 overs"}`
     : `Open until ${formatDate(match?.score_deadline_at) || "7.1 overs"}`;
+}
+
+function isCoreSubmissionBeforeOfficialXi(match) {
+  if (!match?.playing_xi_announced_at) {
+    return true;
+  }
+
+  const announcedAt = new Date(match.playing_xi_announced_at).getTime();
+  if (Number.isNaN(announcedAt)) {
+    return true;
+  }
+
+  return Date.now() < announcedAt;
 }
 
 function getPlayingXiGroups(match) {
