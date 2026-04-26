@@ -3100,6 +3100,8 @@ body[data-theme="light"] .hero {
   font-size: 0.94rem;
   font-weight: 700;
   white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .primary-nav-link::after {
@@ -4497,7 +4499,8 @@ body[data-theme="light"] .match-rail-item.active {
     background: rgba(7, 18, 35, 0.92);
     border: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow: 0 22px 50px rgba(0, 0, 0, 0.28);
-    backdrop-filter: blur(20px);
+    contain: layout paint;
+    transform: translateZ(0);
   }
 
   body[data-theme="light"] .mobile-dock {
@@ -4524,6 +4527,8 @@ body[data-theme="light"] .match-rail-item.active {
     font-weight: 800;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .mobile-dock-link.active {

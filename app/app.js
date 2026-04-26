@@ -117,6 +117,7 @@ const state = {
   predictionReloadTimer: null,
   squadEnsureTimer: null,
   matchProbeTimer: null,
+  lastNavigationAt: 0,
   leagueRefreshTimer: null,
   leagueRefreshBusy: false,
   lastLeagueRefreshKickAt: 0,
@@ -472,6 +473,7 @@ document.addEventListener("input", handleInput);
 document.addEventListener("keydown", handleKeyDown);
 document.addEventListener("visibilitychange", handleAutoSyncVisibilityChange);
 window.addEventListener("hashchange", handleHashChange);
+window.addEventListener("popstate", handleHashChange);
 window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
 window.addEventListener("appinstalled", handleAppInstalled);
 window.addEventListener("focus", handleAutoSyncResume);
@@ -1154,17 +1156,13 @@ function normalizeRouteState(route = {}) {
   return { page, section, matchId };
 }
 
-function readRouteState() {
-  if (typeof window === "undefined") {
+function parseRouteHash(rawHash = "") {
+  const cleanedHash = String(rawHash || "").replace(/^#/, "");
+  if (!cleanedHash || isAuthCallbackHash(cleanedHash)) {
     return normalizeRouteState();
   }
 
-  const rawHash = window.location.hash.replace(/^#/, "");
-  if (!rawHash || isAuthCallbackHash(rawHash)) {
-    return normalizeRouteState();
-  }
-
-  const normalizedHash = rawHash.startsWith("/") ? rawHash.slice(1) : rawHash;
+  const normalizedHash = cleanedHash.startsWith("/") ? cleanedHash.slice(1) : cleanedHash;
   const [pathPart, queryPart = ""] = normalizedHash.split("?");
   const segments = pathPart
     .split("/")
@@ -1177,6 +1175,14 @@ function readRouteState() {
   const matchId = params.get("match") || segments[2] || null;
 
   return normalizeRouteState({ page, section, matchId });
+}
+
+function readRouteState() {
+  if (typeof window === "undefined") {
+    return normalizeRouteState();
+  }
+
+  return parseRouteHash(window.location.hash);
 }
 
 function buildRouteHref(route = {}) {
@@ -1195,36 +1201,45 @@ function buildRouteHref(route = {}) {
   return `#/${segments.join("/")}${query ? `?${query}` : ""}`;
 }
 
-function navigateToRoute(route, { scrollToTop = true } = {}) {
+function navigateToRoute(route, { scrollToTop = true, replace = false } = {}) {
   const nextRoute = normalizeRouteState({
     ...state.route,
     ...route,
   });
   const nextHash = buildRouteHref(nextRoute);
+  const sameHash = window.location.hash === nextHash;
 
   state.route = nextRoute;
   state.predictionScorecardMatchId = null;
   state.playerPicker = null;
+  state.lastNavigationAt = Date.now();
   if (nextRoute.matchId) {
     state.selectedMatchId = nextRoute.matchId;
   }
 
-  if (window.location.hash === nextHash) {
-    syncRouteSelection();
-    render();
-    if (scrollToTop) {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+  syncRouteSelection();
+  render();
+
+  if (!sameHash) {
+    if (replace) {
+      window.history.replaceState(null, "", nextHash);
+    } else {
+      window.history.pushState(null, "", nextHash);
     }
-    return;
   }
 
-  window.location.hash = nextHash;
+  if (scrollToTop) {
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    });
+  }
 }
 
 function handleHashChange() {
   state.route = readRouteState();
   state.predictionScorecardMatchId = null;
   state.playerPicker = null;
+  state.lastNavigationAt = Date.now();
   syncRouteSelection();
   render();
 }
@@ -1710,19 +1725,24 @@ function queuePostRenderWork(route = getCurrentRoute()) {
   }
 
   const prefetchMatches = getSquadPrefetchMatches(route);
+  const navSettling = isRouteNavigationSettling();
   if (prefetchMatches.length) {
     state.squadEnsureTimer = window.setTimeout(() => {
       state.squadEnsureTimer = null;
       void ensureOfficialTeamSquadsForMatches(prefetchMatches).catch((error) => {
         console.error(error);
       });
-    }, 50);
+    }, navSettling ? 240 : 80);
   }
 
   state.matchProbeTimer = window.setTimeout(() => {
     state.matchProbeTimer = null;
     void maybeProbeVisibleMatchState();
-  }, 120);
+  }, navSettling ? 520 : 160);
+}
+
+function isRouteNavigationSettling() {
+  return Boolean(state.lastNavigationAt && Date.now() - state.lastNavigationAt < 450);
 }
 
 function getSquadPrefetchMatches(route = getCurrentRoute()) {
@@ -4339,6 +4359,15 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
         ? "Core saved"
         : "Started"
     : "Waiting for your entry";
+  const canShowManualSync =
+    Boolean(state.user) &&
+    !state.demoMode &&
+    !leagueEnded &&
+    Boolean(match.external_match_id) &&
+    status !== "cancelled" &&
+    !scoreResult;
+  const manualSyncAction = isAdmin ? "sync-selected-match" : "sync-live-data";
+  const manualSyncBusy = isAdmin ? state.syncingMatchIds.has(match.id) : state.autoSyncBusy;
 
   return `
     <section class="arena-panel match-command-shell">
@@ -4376,10 +4405,10 @@ function renderMatchDetail(match, prediction, isAdmin, leagueEnded = false) {
           <div class="match-command-status-actions">
             <button class="btn" type="button" data-action="jump-match-panel" data-panel-id="prediction-panel">${escapeHtml(actionLabel)}</button>
             ${
-              isAdmin
-                ? `<button class="ghost-btn" type="button" data-action="sync-selected-match" data-match-id="${match.id}" ${
-                    state.syncingMatchIds.has(match.id) ? "disabled" : ""
-                  }>${state.syncingMatchIds.has(match.id) ? "Syncing..." : "Sync now"}</button>`
+              canShowManualSync
+                ? `<button class="ghost-btn" type="button" data-action="${manualSyncAction}" data-match-id="${match.id}" ${
+                    manualSyncBusy ? "disabled" : ""
+                  }>${manualSyncBusy ? "Syncing..." : "Sync now"}</button>`
                 : ""
             }
           </div>
@@ -6011,6 +6040,14 @@ async function saveResult(form) {
 }
 
 async function handleClick(event) {
+  const routeLink = event.target.closest('a[href^="#/"]');
+  if (routeLink) {
+    event.preventDefault();
+    const href = routeLink.getAttribute("href") || "#/home";
+    navigateToRoute(parseRouteHash(href));
+    return;
+  }
+
   const target = event.target.closest("[data-action]");
   if (!target) {
     return;
@@ -6189,6 +6226,32 @@ async function handleClick(event) {
 
     if (action === "import-provider-fixture") {
       await importProviderFixture(target.getAttribute("data-external-match-id"));
+      return;
+    }
+
+    if (action === "sync-live-data") {
+      if (!state.user || !state.session?.access_token) {
+        throw new Error("Sign in again to refresh live match data.");
+      }
+
+      if (state.demoMode) {
+        flash("Demo data is already local.", "info");
+        return;
+      }
+
+      if (state.autoSyncBusy) {
+        flash("Live refresh is already running.", "info");
+        return;
+      }
+
+      state.autoSyncBusy = true;
+      render();
+      try {
+        await syncLeagueFromServer({ quiet: false });
+      } finally {
+        state.autoSyncBusy = false;
+        render();
+      }
       return;
     }
 
@@ -7153,6 +7216,10 @@ function isPredictionFormActive() {
 }
 
 function isRefreshSensitiveInteractionActive() {
+  if (isRouteNavigationSettling()) {
+    return true;
+  }
+
   if (state.playerPicker || state.predictionScorecardMatchId || state.memberProfileUserId) {
     return true;
   }
