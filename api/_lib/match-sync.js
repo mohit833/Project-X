@@ -28,11 +28,13 @@ async function syncActiveMatches({
   supabaseUrl,
   supabaseServiceRoleKey,
   limit = 40,
+  leagueId = null,
 } = {}) {
   const rawMatches = await fetchTrackedMatches(
     supabaseUrl,
     supabaseServiceRoleKey,
     Math.max(Number(limit) * 3 || 120, 60),
+    { leagueId },
   );
   const matches = rawMatches
     .filter((match) => shouldAutoSyncMatch(match))
@@ -129,7 +131,12 @@ async function syncActiveMatches({
   return report;
 }
 
-async function fetchTrackedMatches(supabaseUrl, supabaseServiceRoleKey, limit) {
+async function fetchTrackedMatches(
+  supabaseUrl,
+  supabaseServiceRoleKey,
+  limit,
+  { leagueId = null } = {},
+) {
   const select =
     "id,league_id,title,team_a,team_b,venue,starts_at,status,notes,created_by,provider,external_match_id,series_name,playing_xi,current_innings_ball,current_over_display,auto_sync_enabled,last_synced_at,sync_error";
   const rows = await supabaseRequest(supabaseUrl, supabaseServiceRoleKey, "matches", {
@@ -138,6 +145,7 @@ async function fetchTrackedMatches(supabaseUrl, supabaseServiceRoleKey, limit) {
       auto_sync_enabled: "is.true",
       external_match_id: "not.is.null",
       status: "not.eq.cancelled",
+      league_id: leagueId ? `eq.${leagueId}` : undefined,
       order: "starts_at.asc.nullslast",
       limit: String(limit),
     },

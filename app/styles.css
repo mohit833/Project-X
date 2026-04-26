@@ -1377,6 +1377,8 @@ button {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
     rgba(255, 255, 255, 0.025);
+  content-visibility: auto;
+  contain-intrinsic-size: 180px;
 }
 
 .prediction-scorecard-row.current-user {
@@ -1674,6 +1676,8 @@ button {
   padding: 14px 16px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.05);
+  content-visibility: auto;
+  contain-intrinsic-size: 120px;
 }
 
 .leaderboard-main {
@@ -3610,6 +3614,8 @@ body[data-theme="light"] .fixture-card-today {
     var(--surface);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
+  content-visibility: auto;
+  contain-intrinsic-size: 320px;
 }
 
 body[data-theme="light"] .fixture-card {

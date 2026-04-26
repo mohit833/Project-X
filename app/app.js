@@ -115,6 +115,8 @@ const state = {
   realtimeChannel: null,
   reloadTimer: null,
   predictionReloadTimer: null,
+  squadEnsureTimer: null,
+  matchProbeTimer: null,
   leagueRefreshTimer: null,
   leagueRefreshBusy: false,
   lastLeagueRefreshKickAt: 0,
@@ -1334,12 +1336,7 @@ function setupAutoSync() {
   const shouldKickImmediately = !state.autoSyncTimer;
   teardownAutoSync();
 
-  if (!state.user || currentMembership()?.role !== "admin" || state.demoMode) {
-    return;
-  }
-
-  const trackedMatches = state.matches.filter(shouldAutoSyncMatch);
-  if (!trackedMatches.length) {
+  if (!canAutoSyncMatches()) {
     return;
   }
 
@@ -1381,12 +1378,24 @@ function teardownAutoSync() {
   }
 }
 
-function canAutoSyncMatches() {
+function canAdminClientAutoSyncMatches() {
   if (!state.user || currentMembership()?.role !== "admin" || state.demoMode) {
     return false;
   }
 
   return state.matches.some(shouldAutoSyncMatch);
+}
+
+function canServerAutoSyncMatches() {
+  if (!state.user || !state.activeLeagueId || state.demoMode || !state.session?.access_token) {
+    return false;
+  }
+
+  return state.matches.some(shouldAutoSyncMatch);
+}
+
+function canAutoSyncMatches() {
+  return canAdminClientAutoSyncMatches() || canServerAutoSyncMatches();
 }
 
 function canRefreshLeagueBundle() {
@@ -1441,9 +1450,22 @@ function requestAutoSync({ force = false } = {}) {
   }
 
   state.lastAutoSyncKickAt = now;
-  syncTrackedMatches({ quiet: true }).catch((error) => {
-    console.error(error);
-  });
+
+  if (canAdminClientAutoSyncMatches()) {
+    syncTrackedMatches({ quiet: true }).catch((error) => {
+      console.error(error);
+    });
+    return;
+  }
+
+  state.autoSyncBusy = true;
+  syncLeagueFromServer({ quiet: true })
+    .catch((error) => {
+      console.error(error);
+    })
+    .finally(() => {
+      state.autoSyncBusy = false;
+    });
 }
 
 function handleAutoSyncVisibilityChange() {
@@ -1469,8 +1491,12 @@ function requestForegroundRefresh() {
   }
 
   state.lastForegroundRefreshAt = now;
-  requestLeagueRefresh();
-  requestAutoSync();
+  if (canAutoSyncMatches()) {
+    requestAutoSync({ force: true });
+    return;
+  }
+
+  requestLeagueRefresh({ force: true });
 }
 
 function shouldProbeVisibleMatch(match) {
@@ -1667,8 +1693,78 @@ function render() {
     </div>
   `;
 
-  void ensureOfficialTeamSquadsForMatches(state.matches);
-  void maybeProbeVisibleMatchState();
+  queuePostRenderWork(route);
+}
+
+function queuePostRenderWork(route = getCurrentRoute()) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (state.squadEnsureTimer) {
+    window.clearTimeout(state.squadEnsureTimer);
+  }
+
+  if (state.matchProbeTimer) {
+    window.clearTimeout(state.matchProbeTimer);
+  }
+
+  const prefetchMatches = getSquadPrefetchMatches(route);
+  if (prefetchMatches.length) {
+    state.squadEnsureTimer = window.setTimeout(() => {
+      state.squadEnsureTimer = null;
+      void ensureOfficialTeamSquadsForMatches(prefetchMatches).catch((error) => {
+        console.error(error);
+      });
+    }, 50);
+  }
+
+  state.matchProbeTimer = window.setTimeout(() => {
+    state.matchProbeTimer = null;
+    void maybeProbeVisibleMatchState();
+  }, 120);
+}
+
+function getSquadPrefetchMatches(route = getCurrentRoute()) {
+  const matches = [];
+  const seen = new Set();
+  const pushMatch = (match) => {
+    if (!match?.id || seen.has(match.id)) {
+      return;
+    }
+
+    seen.add(match.id);
+    matches.push(match);
+  };
+
+  if (state.playerPicker?.matchId) {
+    pushMatch(state.matches.find((match) => match.id === state.playerPicker.matchId) || null);
+  }
+
+  switch (route.page) {
+    case "current":
+      pushMatch(getCurrentActionMatch());
+      break;
+    case "matches":
+      if (route.section === "fixtures") {
+        pushMatch(getCurrentActionMatch());
+        getFilteredMatches().slice(0, 6).forEach(pushMatch);
+      } else {
+        pushMatch(getSelectedMatch());
+      }
+      break;
+    case "home":
+      pushMatch(getLeagueFocusMatch());
+      break;
+    case "league":
+      pushMatch(getCurrentActionMatch());
+      break;
+    default:
+      pushMatch(getSelectedMatch());
+      break;
+  }
+
+  return matches;
 }
 
 function getUtilityLabel() {
@@ -8377,6 +8473,53 @@ async function syncTrackedMatches({ quiet = true } = {}) {
   } finally {
     state.autoSyncBusy = false;
   }
+}
+
+async function syncLeagueFromServer({ quiet = true } = {}) {
+  if (!state.activeLeagueId || !state.session?.access_token) {
+    throw new Error("Sign in again to refresh live match data.");
+  }
+
+  const response = await fetch("/api/member-sync", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${state.session.access_token}`,
+    },
+    body: JSON.stringify({
+      leagueId: state.activeLeagueId,
+    }),
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_error) {
+    payload = null;
+  }
+
+  if (!response.ok || payload?.ok === false) {
+    const message =
+      payload?.error ||
+      (response.status === 401 || response.status === 403
+        ? "Your session cannot run server sync for this league."
+        : `Server sync returned ${response.status}.`);
+    throw new Error(message);
+  }
+
+  await loadLeagueBundle();
+  render();
+
+  if (!quiet && payload?.report) {
+    const summary = payload.report;
+    flash(
+      `Server sync checked ${summary.queued || 0} tracked matches and settled ${summary.settled || 0}.`,
+      "success",
+    );
+  }
+
+  return payload;
 }
 
 async function syncMatchFromProvider(
