@@ -117,6 +117,8 @@ const state = {
   predictionReloadTimer: null,
   squadEnsureTimer: null,
   matchProbeTimer: null,
+  fixtureRenderTimer: null,
+  fixtureRenderLimit: 10,
   lastNavigationAt: 0,
   leagueRefreshTimer: null,
   leagueRefreshBusy: false,
@@ -168,6 +170,9 @@ const AUTO_SYNC_RESUME_THROTTLE_MS = 10 * 60 * 1000;
 const MATCH_STATUS_PROBE_STALE_MS = 10 * 60 * 1000;
 const MATCH_STATUS_PROBE_THROTTLE_MS = 10 * 60 * 1000;
 const FOREGROUND_REFRESH_THROTTLE_MS = 45 * 1000;
+const FIXTURE_INITIAL_RENDER_LIMIT = 10;
+const FIXTURE_RENDER_CHUNK_SIZE = 18;
+const FIXTURE_RENDER_DELAY_MS = 90;
 const DEMO_MATCHES = [
   {
     id: "match-1",
@@ -1202,17 +1207,22 @@ function buildRouteHref(route = {}) {
 }
 
 function navigateToRoute(route, { scrollToTop = true, replace = false } = {}) {
+  const previousRoute = getCurrentRoute();
   const nextRoute = normalizeRouteState({
     ...state.route,
     ...route,
   });
   const nextHash = buildRouteHref(nextRoute);
   const sameHash = window.location.hash === nextHash;
+  const enteringFixtures = !isFixturesRoute(previousRoute) && isFixturesRoute(nextRoute);
 
   state.route = nextRoute;
   state.predictionScorecardMatchId = null;
   state.playerPicker = null;
   state.lastNavigationAt = Date.now();
+  if (enteringFixtures) {
+    resetFixtureTimelineRender();
+  }
   if (nextRoute.matchId) {
     state.selectedMatchId = nextRoute.matchId;
   }
@@ -1236,12 +1246,22 @@ function navigateToRoute(route, { scrollToTop = true, replace = false } = {}) {
 }
 
 function handleHashChange() {
-  state.route = readRouteState();
+  const previousRoute = getCurrentRoute();
+  const nextRoute = readRouteState();
+  const enteringFixtures = !isFixturesRoute(previousRoute) && isFixturesRoute(nextRoute);
+  state.route = nextRoute;
   state.predictionScorecardMatchId = null;
   state.playerPicker = null;
   state.lastNavigationAt = Date.now();
+  if (enteringFixtures) {
+    resetFixtureTimelineRender();
+  }
   syncRouteSelection();
   render();
+}
+
+function isFixturesRoute(route = getCurrentRoute()) {
+  return route?.page === "matches" && getMatchesRouteSection(route.section || "fixtures") === "fixtures";
 }
 
 function syncRouteSelection() {
@@ -2740,16 +2760,53 @@ function computeFixtureFilterStatus(match) {
   return "scheduled";
 }
 
+function resetFixtureTimelineRender() {
+  state.fixtureRenderLimit = FIXTURE_INITIAL_RENDER_LIMIT;
+  if (state.fixtureRenderTimer) {
+    window.clearTimeout(state.fixtureRenderTimer);
+    state.fixtureRenderTimer = null;
+  }
+}
+
+function scheduleFixtureTimelineExpansion(totalCount) {
+  if (!isFixturesRoute() || totalCount <= state.fixtureRenderLimit || state.fixtureRenderTimer) {
+    return;
+  }
+
+  state.fixtureRenderTimer = window.setTimeout(() => {
+    state.fixtureRenderTimer = null;
+    if (!isFixturesRoute()) {
+      return;
+    }
+
+    state.fixtureRenderLimit = Math.min(
+      totalCount,
+      state.fixtureRenderLimit + FIXTURE_RENDER_CHUNK_SIZE,
+    );
+    render();
+  }, isRouteNavigationSettling() ? FIXTURE_RENDER_DELAY_MS * 2 : FIXTURE_RENDER_DELAY_MS);
+}
+
 function renderFixtureTimeline() {
   const matches = getFilteredMatches();
+  const visibleLimit = Math.min(
+    Math.max(state.fixtureRenderLimit || FIXTURE_INITIAL_RENDER_LIMIT, FIXTURE_INITIAL_RENDER_LIMIT),
+    matches.length,
+  );
+  const visibleMatches = matches.slice(0, visibleLimit);
+  const remainingCount = matches.length - visibleMatches.length;
+  scheduleFixtureTimelineExpansion(matches.length);
 
   return `
     <section class="fixture-timeline">
       ${
         matches.length
-          ? matches
+          ? visibleMatches
               .map((match) => renderFixtureTimelineCard(match))
-              .join("")
+              .join("") +
+            (remainingCount > 0
+              ? `<section class="fixture-timeline-loader" aria-live="polite">Loading ${remainingCount} more fixtures...</section>`
+              : "")
           : `<section class="panel"><div class="empty-state">No fixtures match the selected filters yet.</div></section>`
       }
     </section>
@@ -6295,6 +6352,7 @@ async function handleClick(event) {
         todayOnly: false,
         scorecardOnly: false,
       };
+      resetFixtureTimelineRender();
       render();
       return;
     }
@@ -6303,6 +6361,7 @@ async function handleClick(event) {
       const flag = target.getAttribute("data-flag");
       if (flag === "todayOnly" || flag === "scorecardOnly") {
         state.fixtureFilters[flag] = !state.fixtureFilters[flag];
+        resetFixtureTimelineRender();
         render();
       }
       return;
@@ -6367,12 +6426,14 @@ function handleChange(event) {
 
   if (target instanceof HTMLSelectElement && target.id === "fixture-team-filter") {
     state.fixtureFilters.team = target.value || "all";
+    resetFixtureTimelineRender();
     render();
     return;
   }
 
   if (target instanceof HTMLSelectElement && target.id === "fixture-status-filter") {
     state.fixtureFilters.status = target.value || "scheduled";
+    resetFixtureTimelineRender();
     render();
     return;
   }

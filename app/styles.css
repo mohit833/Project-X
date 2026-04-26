@@ -3604,6 +3604,16 @@ body[data-theme="light"] .fixture-card-today {
   gap: 18px;
 }
 
+.fixture-timeline-loader {
+  justify-self: center;
+  padding: 12px 18px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  font-weight: 800;
+}
+
 .fixture-card {
   display: grid;
   grid-template-columns: 250px 50px minmax(0, 1fr) auto;
